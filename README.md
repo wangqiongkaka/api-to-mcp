@@ -53,24 +53,7 @@ docker compose --profile full up -d --build
 
 ## 配置一个接口
 
-在接口库选择“新建接口”，或“使用 Pod 查询示例”。示例对应：
-
-```text
-GET http://10.12.72.42:9007/ws/aquaman/kubernetes/pods/getPodInstance?showAllPods=false&podIp=10.60.144.183
-```
-
-参数配置为：
-
-| 名称 | 位置 | 类型 | 映射 | 必填 |
-| --- | --- | --- | --- | --- |
-| showAllPods | query | boolean | 固定值 `false` | 由服务端保证 |
-| podIp | query | string | 客户端填写 | 是 |
-
-保存后，用以下参数试调用，再发布工具：
-
-```json
-{"podIp":"10.60.144.183"}
-```
+在接口库选择“新建接口”，填写请求 URL、请求方式和用途描述，并在参数表中配置固定值或由客户端填写的参数。保存后填写动态参数试调用，确认结果后发布工具。
 
 JSON 请求体由 `body` 位置的参数组成一个对象。嵌套数据用 `object` 或 `array` 类型参数传入。数组和对象不支持放入 query/path/header。路径变量使用 `{id}`，其动态参数必须标记为必填。
 
@@ -85,7 +68,7 @@ URL 中原有查询字符串会保留为固定基础值，参数表同名 query 
 只有 `.env` 中 `UPSTREAM_ORIGINS` 列出的源地址能被发布或调用：
 
 ```dotenv
-UPSTREAM_ORIGINS=http://10.12.72.42:9007,https://api.example.com
+UPSTREAM_ORIGINS=https://api.example.com
 ```
 
 每项必须是完整的协议、主机及可选端口，不能使用通配符、路径或账号信息。修改后需重启 Go 服务。不会使用系统 HTTP 代理，不跟随上游重定向；默认超时 15 秒，允许配置 1–60 秒，响应限制为 2 MiB，不自动重试写请求。
