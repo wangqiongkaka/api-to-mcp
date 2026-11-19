@@ -66,9 +66,64 @@ textarea::placeholder {
   color: #8793a5;
 }
 input:hover,
-select:hover,
+select:enabled:hover,
 textarea:hover {
   border-color: #a3b4ce;
+}
+select {
+  min-height: 34px;
+}
+select:enabled {
+  cursor: pointer;
+}
+select:disabled {
+  cursor: not-allowed;
+}
+@supports (appearance: base-select) {
+  select,
+  select::picker(select) {
+    appearance: base-select;
+  }
+  select::picker(select) {
+    margin-block: 4px;
+    padding: 4px;
+    border: 1px solid #d8dfeb;
+    border-radius: 8px;
+    background: #fff;
+    color: #202d45;
+    font-weight: 500;
+  }
+  select::picker-icon {
+    color: var(--muted);
+  }
+  select option {
+    min-height: 34px;
+    padding: 6px 9px;
+    gap: 8px;
+    border-radius: 5px;
+    outline-offset: -2px;
+  }
+  select option:checked {
+    background: #eaf1ff;
+    color: var(--blue);
+  }
+  select option:enabled:not(:checked):is(:hover, :focus-visible) {
+    background: #edf2fa;
+  }
+  select option:disabled {
+    color: var(--muted);
+    cursor: not-allowed;
+  }
+  select option::checkmark {
+    order: 1;
+    margin-inline-start: auto;
+  }
+  @media (pointer: coarse) {
+    select,
+    select option {
+      min-height: 44px;
+    }
+  }
 }
 textarea {
   resize: vertical;
@@ -831,47 +886,17 @@ tbody tr:last-child td {
 .parameter-table select {
   font-size: 11px;
   padding: 8px 6px;
-  min-height: 34px;
   border-color: #e2e7ef;
 }
-.parameter-table .parameter-type {
-  min-width: 122px;
+.parameter-table input {
+  min-height: 34px;
+}
+.parameter-table select {
   padding-inline: 9px;
   font-size: 12px;
 }
-@supports (appearance: base-select) {
-  .parameter-type,
-  .parameter-type::picker(select) {
-    appearance: base-select;
-  }
-  .parameter-type::picker(select) {
-    margin-block: 4px;
-    padding: 4px;
-    border: 1px solid #d8dfeb;
-    border-radius: 8px;
-    background: #fff;
-    color: #202d45;
-  }
-  .parameter-type::picker-icon {
-    color: var(--muted);
-  }
-  .parameter-type option {
-    min-height: 34px;
-    padding: 6px 9px;
-    border-radius: 5px;
-  }
-  .parameter-type option:checked {
-    background: #eaf1ff;
-    color: var(--blue);
-  }
-  .parameter-type option:is(:hover, :focus-visible) {
-    background: #edf2fa;
-    outline-offset: -2px;
-  }
-  .parameter-type option::checkmark {
-    order: 1;
-    margin-left: auto;
-  }
+.parameter-table .parameter-type {
+  min-width: 122px;
 }
 .parameter-table td:nth-child(4) input {
   margin-top: 7px;
