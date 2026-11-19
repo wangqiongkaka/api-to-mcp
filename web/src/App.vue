@@ -934,9 +934,9 @@ onUnmounted(() => {
                             placeholder="参数名称"
                           /><input
                             v-model="p.description"
-                            class="sub-input"
+                            class="parameter-description"
                             :aria-label="`参数 ${index + 1} 描述`"
-                            placeholder="参数用途说明"
+                            placeholder="补充参数用途（选填）"
                           />
                         </td>
                         <td>

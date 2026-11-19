@@ -891,9 +891,14 @@ tbody tr:last-child td {
 .parameter-table input {
   min-height: 34px;
 }
-.parameter-table select {
+.parameter-table select,
+.parameter-table td:first-child input {
   padding-inline: 9px;
   font-size: 12px;
+}
+.parameter-table select {
+  min-width: 100px;
+  white-space: nowrap;
 }
 .parameter-table .parameter-type {
   min-width: 122px;
@@ -901,11 +906,25 @@ tbody tr:last-child td {
 .parameter-table td:nth-child(4) input {
   margin-top: 7px;
 }
-.parameter-table .sub-input {
-  border: 0;
-  padding-left: 2px;
-  color: #76849a;
-  font-size: 10px;
+.parameter-table .parameter-description {
+  display: block;
+  margin-top: 7px;
+  text-overflow: ellipsis;
+}
+.parameter-description:enabled {
+  background: #fafbfd;
+}
+.parameter-description::placeholder {
+  color: var(--muted);
+}
+.parameter-table .parameter-description:enabled:hover {
+  border-color: #a3b4ce;
+}
+.parameter-table .parameter-description:focus {
+  background: #fff;
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+  text-overflow: clip;
 }
 .parameter-table .checkbox-cell {
   text-align: center;
