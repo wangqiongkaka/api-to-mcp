@@ -96,6 +96,23 @@ test("注册、配置、试调用、发布、导出和令牌管理", async ({ pa
   await page.getByRole("button", { name: "配置", exact: true }).click();
   await page.getByRole("button", { name: "停用工具" }).click();
   await expect(page.getByRole("button", { name: "保存草稿" })).toBeEnabled();
+  const callArgs = page.getByLabel("调用参数（JSON）");
+  await page.getByLabel("参数 1 映射方式").selectOption({ label: "客户端填写" });
+  await callArgs.fill('{"podIp":"10.60.144.183","showAllPods":true}');
+  await page.getByLabel("参数 2 映射方式").selectOption({ label: "固定值" });
+  await page.getByLabel("参数 2 固定值").fill("10.60.144.184");
+  await page.getByRole("button", { name: "保存草稿" }).click();
+  const call = page.waitForResponse((response) => response.url().endsWith("/call"));
+  await page.getByRole("button", { name: "运行测试" }).click();
+  const response = await call;
+  expect(response.ok(), await response.text()).toBe(true);
+  expect(JSON.parse(await callArgs.inputValue())).toEqual({ showAllPods: true });
+  await expect(page.locator(".call-result pre")).toContainText(
+    '"podIp": "10.60.144.184"',
+  );
+  await expect(page.locator(".call-result pre")).toContainText(
+    '"showAllPods": "true"',
+  );
   await page.getByRole("button", { name: "返回接口库" }).click();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "删除", exact: true }).click();

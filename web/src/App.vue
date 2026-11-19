@@ -260,6 +260,23 @@ function extractQuery() {
   }
 }
 
+function removeFixedCallArgs(parameters: Definition["parameters"]) {
+  const fixedNames = new Set(parameters.filter((p) => p.fixed).map((p) => p.name));
+  if (fixedNames.size === 0) return;
+  let args: unknown;
+  try {
+    args = JSON.parse(callArgs.value);
+  } catch {
+    // 保留尚未编辑完成的 JSON，避免覆盖用户输入。
+    return;
+  }
+  if (args === null || typeof args !== "object" || Array.isArray(args)) return;
+  const entries = Object.entries(args);
+  const remaining = entries.filter(([name]) => !fixedNames.has(name));
+  if (remaining.length !== entries.length)
+    callArgs.value = JSON.stringify(Object.fromEntries(remaining), null, 2);
+}
+
 async function save() {
   if (!editor.value) return;
   saving.value = true;
@@ -274,6 +291,7 @@ async function save() {
     );
     await refreshTools();
     editor.value = definitionOf(record);
+    removeFixedCallArgs(record.parameters);
     selectedId.value = record.id;
     baseline.value = JSON.stringify(editor.value);
     preview.value = "schema";
