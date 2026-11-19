@@ -99,6 +99,14 @@ func TestPlatformIntegration(t *testing.T) {
 			writeJSON(w, 200, string(body))
 			return
 		}
+		if r.URL.Query().Get("podIp") == "upstream-error" {
+			http.Error(w, "upstream error", 502)
+			return
+		}
+		if r.URL.Query().Get("podIp") == "missing-output" {
+			writeJSON(w, 200, map[string]any{})
+			return
+		}
 		writeJSON(w, 200, map[string]any{"podIp": r.URL.Query().Get("podIp"), "showAllPods": r.URL.Query().Get("showAllPods")})
 	}))
 	defer upstream.Close()
@@ -250,6 +258,55 @@ func TestPlatformIntegration(t *testing.T) {
 	list, err = session.ListTools(ctx, nil)
 	if err != nil || len(list.Tools) != 0 {
 		t.Fatal("工具停用未生效")
+	}
+	mapped := d
+	mapped.OutputFields = []OutputField{
+		{Name: "ip", Source: "response", Value: "/podIp"},
+		{Name: "source", Source: "fixed", Value: `"inventory"`},
+	}
+	if code := jsonRequest(t, alice, "PUT", address, mapped, nil); code != 200 {
+		t.Fatalf("输出配置保存失败：%d", code)
+	}
+	var mappedTools []ToolRecord
+	if code := jsonRequest(t, alice, "GET", server.URL+"/api/tools", nil, &mappedTools); code != 200 || len(mappedTools) != 1 || len(mappedTools[0].OutputFields) != 2 || mappedTools[0].OutputFields[0] != mapped.OutputFields[0] {
+		t.Fatalf("输出配置读取失败：%d，%+v", code, mappedTools)
+	}
+	if code := jsonRequest(t, alice, "POST", address+"/publish", map[string]bool{"published": true}, nil); code != 200 {
+		t.Fatalf("配置输出字段的工具发布失败：%d", code)
+	}
+	for _, input := range []struct {
+		ip     string
+		status int
+		want   string
+		mapped bool
+	}{
+		{"10.60.144.183", 200, `{"ip":"10.60.144.183","source":"inventory"}`, true},
+		{"missing-output", 400, `/podIp`, false},
+		{"upstream-error", 502, "upstream error", false},
+	} {
+		args := map[string]any{"podIp": input.ip}
+		var direct struct {
+			CallResult
+			Error string `json:"error"`
+		}
+		status := jsonRequest(t, alice, "POST", address+"/call", map[string]any{"arguments": args}, &direct)
+		if input.status == 400 {
+			if status != 400 || !strings.Contains(direct.Error, input.want) {
+				t.Fatalf("试调用映射错误未返回：%d，%+v", status, direct)
+			}
+		} else if status != 200 || direct.StatusCode != input.status || direct.OutputMapped != input.mapped || !strings.Contains(direct.Body, input.want) {
+			t.Fatalf("试调用输出错误：%d，%+v", status, direct)
+		}
+		result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: mapped.Name, Arguments: args})
+		if err != nil || result.IsError == input.mapped || !strings.Contains(result.Content[0].(*mcp.TextContent).Text, input.want) {
+			t.Fatalf("MCP 输出错误：%v，%v", result, err)
+		}
+		if input.mapped {
+			data, err := json.Marshal(result.StructuredContent)
+			if err != nil || string(data) != direct.Body {
+				t.Fatalf("MCP 与试调用的 JSON 不一致：%s，%s，%v", data, direct.Body, err)
+			}
+		}
 	}
 	whole := d
 	whole.Name, whole.Method, whole.WholeBody = "queryWithBody", "POST", true

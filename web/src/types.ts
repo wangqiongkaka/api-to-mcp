@@ -26,6 +26,13 @@ export interface Definition {
   wholeBody?: boolean;
   bodyTemplate?: string;
   parameters: Parameter[];
+  outputFields?: OutputField[];
+}
+
+export interface OutputField {
+  name: string;
+  source: "response" | "fixed";
+  value: string;
 }
 
 export interface Tool extends Definition {
@@ -48,6 +55,7 @@ export interface CallResult {
   body: string;
   contentType: string;
   durationMs: number;
+  outputMapped?: boolean;
 }
 
 export const emptyDefinition = (): Definition => ({
@@ -97,5 +105,6 @@ export function definitionOf(d: Definition): Definition {
     wholeBody: d.wholeBody,
     bodyTemplate: d.bodyTemplate,
     parameters: d.parameters.map((p) => ({ ...p })),
+    outputFields: d.outputFields?.length ? d.outputFields.map((field) => ({ ...field })) : undefined,
   };
 }

@@ -25,14 +25,15 @@ type Parameter struct {
 }
 
 type Definition struct {
-	Name           string      `json:"name"`
-	Description    string      `json:"description"`
-	URL            string      `json:"url"`
-	Method         string      `json:"method"`
-	TimeoutSeconds int         `json:"timeoutSeconds"`
-	WholeBody      bool        `json:"wholeBody,omitempty"`
-	BodyTemplate   string      `json:"bodyTemplate,omitempty"`
-	Parameters     []Parameter `json:"parameters"`
+	Name           string        `json:"name"`
+	Description    string        `json:"description"`
+	URL            string        `json:"url"`
+	Method         string        `json:"method"`
+	TimeoutSeconds int           `json:"timeoutSeconds"`
+	WholeBody      bool          `json:"wholeBody,omitempty"`
+	BodyTemplate   string        `json:"bodyTemplate,omitempty"`
+	Parameters     []Parameter   `json:"parameters"`
+	OutputFields   []OutputField `json:"outputFields,omitempty"`
 }
 
 var toolName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]{0,63}$`)
@@ -158,7 +159,7 @@ func (d Definition) Validate() error {
 	if strings.ContainsAny(placeholder.ReplaceAllString(u.Path, ""), "{}") {
 		return fmt.Errorf("URL 路径占位符格式无效")
 	}
-	return nil
+	return validateOutputFields(d.OutputFields)
 }
 
 func fixedValue(p Parameter) (any, error) {

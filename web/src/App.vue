@@ -258,6 +258,20 @@ function addParameter() {
   preview.value = "schema";
 }
 
+function addOutputField() {
+  if (!editor.value) return;
+  editor.value.outputFields ??= [];
+  editor.value.outputFields.push({ name: "", source: "response", value: "" });
+}
+
+function removeOutputField(index: number) {
+  const fields = editor.value?.outputFields;
+  if (editor.value && fields) {
+    fields.splice(index, 1);
+    if (!fields.length) editor.value.outputFields = undefined;
+  }
+}
+
 function extractQuery() {
   if (!editor.value) return;
   try {
@@ -1065,6 +1079,50 @@ onUnmounted(() => {
                     </p>
                   </details>
                 </section>
+                <section aria-labelledby="output-fields-title">
+                  <div class="parameter-heading">
+                    <div>
+                      <h2 id="output-fields-title">输出字段</h2>
+                      <p>留空时返回原始响应。配置后，试调用与 MCP 的成功结果只返回这些字段。</p>
+                    </div>
+                    <button type="button" class="button small" @click="addOutputField">
+                      ＋ 添加输出字段
+                    </button>
+                  </div>
+                  <div v-if="editor.outputFields?.length" class="form-content">
+                    <div v-for="(field, index) in editor.outputFields" :key="index" class="output-field">
+                      <label>
+                        输出名称
+                        <input v-model.trim="field.name" required maxlength="128" placeholder="如 userId" />
+                      </label>
+                      <label>
+                        值来源
+                        <select v-model="field.source" @change="field.value = ''">
+                          <option value="response">上游响应</option>
+                          <option value="fixed">固定值</option>
+                        </select>
+                      </label>
+                      <label class="output-value">
+                        {{ field.source === 'response' ? '响应路径' : '固定 JSON 值' }}
+                        <input
+                          v-model="field.value"
+                          required
+                          spellcheck="false"
+                          maxlength="32768"
+                          :placeholder="field.source === 'response' ? '如 /data/users/0/id' : '如 &quot;crm&quot;、true 或 1'"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        class="icon-button danger-text"
+                        :aria-label="`删除输出字段 ${index + 1}`"
+                        @click="removeOutputField(index)"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                </section>
               </fieldset>
             </form>
             <section class="panel call-panel">
@@ -1111,7 +1169,7 @@ onUnmounted(() => {
                     ><span>{{ result.durationMs }} ms</span
                     ><span>{{ result.contentType || "无内容类型" }}</span>
                   </div>
-                  <pre>{{ formattedBody(result.body) }}</pre>
+                  <pre>{{ result.outputMapped ? result.body : formattedBody(result.body) }}</pre>
                 </div>
               </div>
             </section>

@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,11 +12,14 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+const maxResponseBytes = 2 << 20
+
 type CallResult struct {
-	StatusCode  int    `json:"statusCode"`
-	Body        string `json:"body"`
-	ContentType string `json:"contentType"`
-	DurationMS  int64  `json:"durationMs"`
+	StatusCode   int    `json:"statusCode"`
+	Body         string `json:"body"`
+	ContentType  string `json:"contentType"`
+	DurationMS   int64  `json:"durationMs"`
+	OutputMapped bool   `json:"outputMapped,omitempty"`
 }
 
 func (a *App) execute(ctx context.Context, d Definition, args map[string]any) (CallResult, error) {
@@ -38,14 +42,24 @@ func (a *App) execute(ctx context.Context, d Definition, args map[string]any) (C
 		return result, fmt.Errorf("上游请求失败，请检查服务地址及网络连通性")
 	}
 	defer response.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(response.Body, (2<<20)+1))
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 	if err != nil {
 		return result, fmt.Errorf("读取上游响应失败")
 	}
-	if len(data) > 2<<20 {
+	if len(data) > maxResponseBytes {
 		return result, fmt.Errorf("上游响应超过 2 MiB 限制")
 	}
-	return CallResult{StatusCode: response.StatusCode, Body: string(data), ContentType: response.Header.Get("Content-Type"), DurationMS: time.Since(start).Milliseconds()}, nil
+	result = CallResult{StatusCode: response.StatusCode, ContentType: response.Header.Get("Content-Type"), DurationMS: time.Since(start).Milliseconds()}
+	if len(d.OutputFields) > 0 && response.StatusCode >= 200 && response.StatusCode < 300 {
+		data, err = mapOutput(d.OutputFields, data)
+		if err != nil {
+			return result, err
+		}
+		result.ContentType = "application/json"
+		result.OutputMapped = true
+	}
+	result.Body = string(data)
+	return result, nil
 }
 
 func (a *App) serveMCP(w http.ResponseWriter, r *http.Request) {
@@ -90,6 +104,9 @@ func (a *App) serveMCP(w http.ResponseWriter, r *http.Request) {
 			result, err := a.execute(ctx, tool.Definition, args)
 			if err != nil {
 				return toolError(err.Error()), nil
+			}
+			if result.OutputMapped {
+				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result.Body}}, StructuredContent: json.RawMessage(result.Body)}, nil
 			}
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("HTTP %d\n%s", result.StatusCode, result.Body)}}, StructuredContent: result, IsError: result.StatusCode < 200 || result.StatusCode >= 300}, nil
 		})

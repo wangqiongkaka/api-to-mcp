@@ -125,6 +125,46 @@ test("注册、配置、试调用、发布、导出和令牌管理", async ({ pa
   expect(consoleErrors).toEqual([]);
 });
 
+test("自定义输出字段在保存后用于试调用", async ({ page }, testInfo) => {
+  await page.goto("/");
+  await registerMember(page);
+  await page.getByRole("button", { name: "使用 Pod 查询示例" }).click();
+  await page.getByLabel("接口地址", { exact: true }).fill("http://127.0.0.1:8099/pods");
+  const output = page.getByRole("region", { name: "输出字段" });
+  const add = output.getByRole("button", { name: "添加输出字段" });
+  await add.click();
+  await add.click();
+  await output.getByLabel("输出名称").nth(0).fill("namespace");
+  await output.getByLabel("响应路径").first().fill("/instance/namespace");
+  await output.getByLabel("输出名称").nth(1).fill("source");
+  await output.getByLabel("值来源").nth(1).selectOption("fixed");
+  await output.getByLabel("固定 JSON 值").fill('"inventory"');
+  await page.getByRole("button", { name: "保存草稿" }).click();
+  await expect(page.getByText("接口配置已保存")).toBeVisible();
+  await page.getByRole("button", { name: "返回接口库" }).click();
+  await page.getByRole("button", { name: "配置", exact: true }).click();
+  await expect(output.getByLabel("响应路径")).toHaveValue("/instance/namespace");
+  await expect(output.getByLabel("固定 JSON 值")).toHaveValue('"inventory"');
+  await page.getByRole("button", { name: "运行测试" }).click();
+  await expect(page.locator(".call-result pre")).toHaveText('{"namespace":"platform","source":"inventory"}');
+  await expect(page.locator(".toast")).toHaveCount(0);
+  await page.locator(".call-result").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath("output-fields-desktop.png") });
+  await page.setViewportSize({ width: 393, height: 852 });
+  await expect(output.getByLabel("固定 JSON 值")).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await output.screenshot({ path: testInfo.outputPath("output-fields-mobile.png") });
+  await output.getByRole("button", { name: "删除输出字段 2" }).click();
+  await output.getByRole("button", { name: "删除输出字段 1" }).click();
+  await page.getByRole("button", { name: "保存草稿" }).click();
+  await expect(page.getByRole("button", { name: "运行测试" })).toBeEnabled();
+  await page.getByRole("button", { name: "运行测试" }).click();
+  await expect(page.locator(".call-result pre")).toContainText('"showAllPods": "false"');
+  await page.getByRole("button", { name: "返回接口库" }).click();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "删除", exact: true }).click();
+});
+
 test("请求体配置按需展开并保留已保存的模板", async ({ page }) => {
   await page.goto("/");
   await registerMember(page);
