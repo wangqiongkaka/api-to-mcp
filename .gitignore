@@ -1,0 +1,10 @@
+.env
+.runtime/
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo
+web/playwright-report/
+web/test-results/
+api-to-mcp
+coverage.out
+.DS_Store

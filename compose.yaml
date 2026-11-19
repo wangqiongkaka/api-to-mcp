@@ -1,0 +1,30 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: api_mcp
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?请先运行 go run ./cmd/server -init}
+      POSTGRES_DB: api_to_mcp
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U api_mcp -d api_to_mcp"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  app:
+    profiles: ["full"]
+    build: .
+    env_file: .env
+    environment:
+      APP_ADDR: 0.0.0.0:8088
+      DATABASE_URL: postgres://api_mcp:${DB_PASSWORD}@db:5432/api_to_mcp?sslmode=disable
+    ports:
+      - "127.0.0.1:8088:8088"
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  pgdata:
