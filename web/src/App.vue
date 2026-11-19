@@ -930,12 +930,12 @@ onUnmounted(() => {
                   <table class="parameter-table">
                     <thead>
                       <tr>
-                        <th>参数名称 / 描述</th>
-                        <th>位置</th>
-                        <th>类型</th>
-                        <th>映射方式 / 固定值</th>
-                        <th>必填</th>
-                        <th></th>
+                        <th scope="col">参数名称 / 描述</th>
+                        <th scope="col">位置</th>
+                        <th scope="col">类型</th>
+                        <th scope="col">映射方式 / 固定值</th>
+                        <th scope="col" class="checkbox-cell">必填</th>
+                        <th scope="col" aria-label="操作"></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -948,7 +948,7 @@ onUnmounted(() => {
                             placeholder="参数名称"
                           /><input
                             v-model="p.description"
-                            class="parameter-description"
+                            class="parameter-secondary-input"
                             :aria-label="`参数 ${index + 1} 描述`"
                             placeholder="补充参数用途（选填）"
                           />
@@ -979,29 +979,33 @@ onUnmounted(() => {
                               {{ label }} · {{ type }}
                             </option>
                           </select>
-                          <label
+                          <div
                             v-if="p.type === 'array' && !p.fixed"
-                            class="array-constraint"
+                            class="array-options"
                           >
-                            <input
-                              v-model="p.nonEmpty"
-                              type="checkbox"
-                              :aria-label="`参数 ${index + 1} 至少一项`"
-                            />
-                            至少一项
-                          </label>
-                          <label
-                            v-if="p.type === 'array' && !p.fixed"
-                            class="array-item-field"
-                          >
-                            元素内非空数组字段
-                            <input
-                              v-model.trim="p.itemArrayField"
-                              :aria-label="`参数 ${index + 1} 元素内非空数组字段`"
-                              placeholder="如 value"
-                              maxlength="128"
-                            />
-                          </label>
+                            <label class="array-constraint">
+                              <input
+                                v-model="p.nonEmpty"
+                                type="checkbox"
+                                :aria-label="`参数 ${index + 1} 数组不为空`"
+                              />
+                              数组不为空
+                            </label>
+                            <label class="array-item-field">
+                              元素内数组字段
+                              <input
+                                v-model.trim="p.itemArrayField"
+                                :aria-label="`参数 ${index + 1} 元素内数组字段`"
+                                :aria-describedby="`array-item-help-${index}`"
+                                placeholder="如 value"
+                                maxlength="128"
+                              />
+                              <span
+                                :id="`array-item-help-${index}`"
+                                class="array-item-help"
+                              >选填。填写后，每项的该字段须为非空数组。</span>
+                            </label>
+                          </div>
                         </td>
                         <td>
                           <select
@@ -1014,6 +1018,7 @@ onUnmounted(() => {
                           ><input
                             v-if="p.fixed"
                             v-model="p.value"
+                            class="parameter-secondary-input"
                             :type="p.in === 'header' ? 'password' : 'text'"
                             :aria-label="`参数 ${index + 1} 固定值`"
                             placeholder="输入固定值"

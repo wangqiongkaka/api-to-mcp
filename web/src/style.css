@@ -875,8 +875,11 @@ tbody tr:last-child td {
   min-width: 660px;
 }
 .parameter-table th {
-  padding: 10px 10px;
-  font-size: 10px;
+  padding: 9px 8px;
+  background: #f4f6fa;
+  color: #43516a;
+  font-size: 12px;
+  font-weight: 600;
   border-top: 1px solid var(--border);
   border-radius: 0;
 }
@@ -901,7 +904,8 @@ tbody tr:last-child td {
   min-height: 34px;
 }
 .parameter-table select,
-.parameter-table td:first-child input {
+.parameter-table td:first-child input,
+.parameter-table .parameter-secondary-input {
   padding-inline: 9px;
   font-size: 12px;
 }
@@ -912,24 +916,21 @@ tbody tr:last-child td {
 .parameter-table .parameter-type {
   min-width: 122px;
 }
-.parameter-table td:nth-child(4) input {
-  margin-top: 7px;
-}
-.parameter-table .parameter-description {
+.parameter-table .parameter-secondary-input {
   display: block;
   margin-top: 7px;
   text-overflow: ellipsis;
 }
-.parameter-description:enabled {
+.parameter-secondary-input:enabled {
   background: #fafbfd;
 }
-.parameter-description::placeholder {
+.parameter-secondary-input::placeholder {
   color: var(--muted);
 }
-.parameter-table .parameter-description:enabled:hover {
+.parameter-table .parameter-secondary-input:enabled:hover {
   border-color: #a3b4ce;
 }
-.parameter-table .parameter-description:focus {
+.parameter-table .parameter-secondary-input:focus {
   background: #fff;
   outline: 2px solid var(--blue);
   outline-offset: -2px;
@@ -937,20 +938,40 @@ tbody tr:last-child td {
 }
 .parameter-table .checkbox-cell {
   text-align: center;
+}
+.parameter-table td.checkbox-cell {
   padding-top: 22px;
 }
-.parameter-table .array-constraint {
-  display: flex;
+.array-options {
+  display: grid;
+  gap: 8px;
+  margin-top: 7px;
+  padding: 7px 8px 8px;
+  border-radius: 7px;
+  background: #f6f8fc;
+}
+.array-constraint {
+  flex-direction: row;
   align-items: center;
   gap: 6px;
-  margin-top: 6px;
+  min-height: 26px;
   font-size: 12px;
-  white-space: nowrap;
 }
-.parameter-table .array-item-field {
-  display: block;
-  margin-top: 6px;
+.array-constraint input {
+  flex: none;
+  margin: 0;
+}
+.array-item-field {
+  gap: 4px;
   font-size: 12px;
+}
+.parameter-table .array-item-field input {
+  padding-inline: 8px;
+}
+.array-item-help {
+  color: var(--muted);
+  font-weight: 400;
+  line-height: 1.5;
 }
 .parameter-table input[type="checkbox"] {
   width: 15px;
