@@ -31,6 +31,7 @@ type Definition struct {
 	Method         string      `json:"method"`
 	TimeoutSeconds int         `json:"timeoutSeconds"`
 	WholeBody      bool        `json:"wholeBody,omitempty"`
+	BodyTemplate   string      `json:"bodyTemplate,omitempty"`
 	Parameters     []Parameter `json:"parameters"`
 }
 
@@ -61,6 +62,10 @@ func (d Definition) Validate() error {
 		return fmt.Errorf("超时须为 1–60 秒，最多配置 100 个参数")
 	}
 	seen, paths := map[string]bool{}, map[string]bool{}
+	templateParams := map[string]any{}
+	if d.BodyTemplate != "" && (len(d.BodyTemplate) > 32768 || d.WholeBody) {
+		return fmt.Errorf("请求体模板最多 32768 字节，且不能与完整请求体模式同时使用")
+	}
 	hasBody, hasContentType := d.WholeBody, false
 	if d.WholeBody {
 		if d.Method == "GET" || d.Method == "HEAD" {
@@ -97,6 +102,12 @@ func (d Definition) Validate() error {
 				return fmt.Errorf("使用完整请求体时，请移除请求体字段映射")
 			}
 			hasBody = true
+			if d.BodyTemplate != "" {
+				if !p.Fixed && !p.Required {
+					return fmt.Errorf("模板中的请求体参数必须为必填或固定值：%s", p.Name)
+				}
+				templateParams[p.Name] = nil
+			}
 			if d.Method == "GET" || d.Method == "HEAD" {
 				return fmt.Errorf("GET 和 HEAD 不支持请求体参数")
 			}
@@ -130,6 +141,14 @@ func (d Definition) Validate() error {
 	}
 	if hasBody && hasContentType {
 		return fmt.Errorf("JSON 请求体自动设置 Content-Type，请移除手动配置的同名请求头参数")
+	}
+	if d.BodyTemplate != "" {
+		if len(templateParams) == 0 {
+			return fmt.Errorf("请为请求体模板配置请求体参数")
+		}
+		if _, err := renderBodyTemplate(d.BodyTemplate, templateParams); err != nil {
+			return err
+		}
 	}
 	for _, match := range placeholder.FindAllStringSubmatch(u.Path, -1) {
 		if !paths[match[1]] {
@@ -332,6 +351,12 @@ func (d Definition) BuildRequest(args map[string]any) (*http.Request, error) {
 			if err != nil {
 				return nil, fmt.Errorf("body 必须是有效的 JSON")
 			}
+		}
+	} else if d.BodyTemplate != "" {
+		var err error
+		data, err = renderBodyTemplate(d.BodyTemplate, body)
+		if err != nil {
+			return nil, err
 		}
 	} else if len(body) > 0 {
 		data, _ = json.Marshal(body)

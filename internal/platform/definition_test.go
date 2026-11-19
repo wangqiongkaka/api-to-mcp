@@ -186,6 +186,39 @@ func TestWholeBodyLetsCallerChooseJSONOrNoBody(t *testing.T) {
 	}
 }
 
+func TestBodyTemplateMapsClientValueIntoUpstreamArray(t *testing.T) {
+	d := sampleDefinition()
+	d.Method = "POST"
+	d.Parameters = []Parameter{
+		{Name: "value", In: "body", Type: "string", Required: true},
+		{Name: "Cookie", In: "header", Type: "string", Fixed: true, Value: "private"},
+	}
+	d.BodyTemplate = `{"queryParams":[{"uniqueCode":"field-id","value":["{{value}}"]}]}`
+	const ip = "10.12.78.132"
+	r, err := d.BuildRequest(map[string]any{"value": ip})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Body.Close()
+	body, err := io.ReadAll(r.Body)
+	if err != nil || string(body) != `{"queryParams":[{"uniqueCode":"field-id","value":["10.12.78.132"]}]}` || r.Header.Get("Cookie") != "private" {
+		t.Fatalf("上游请求体或固定请求头不符：%s，%v", body, err)
+	}
+	properties := d.InputSchema()["properties"].(map[string]any)
+	if len(properties) != 1 || properties["value"] == nil {
+		t.Fatalf("客户端应只填写 value：%v", properties)
+	}
+	if _, err := d.BuildRequest(nil); err == nil {
+		t.Fatal("模板接受了缺失的必填参数")
+	}
+	for _, bad := range []string{`{bad}`, `{"queryParams":[]}`, `{"queryParams":["{{Cookie}}"]}`} {
+		d.BodyTemplate = bad
+		if err := d.Validate(); err == nil {
+			t.Fatalf("错误的模板配置被保存：%s", bad)
+		}
+	}
+}
+
 func TestIntegerPrecisionBoundary(t *testing.T) {
 	d := sampleDefinition()
 	d.Parameters[1].Type = "integer"

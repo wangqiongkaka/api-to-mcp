@@ -865,16 +865,32 @@ onUnmounted(() => {
                     <input
                       v-model="editor.wholeBody"
                       type="checkbox"
-                      :disabled="!editor.wholeBody && editor.parameters.some((p) => p.in === 'body')"
+                      :disabled="!editor.wholeBody && (Boolean(editor.bodyTemplate) || editor.parameters.some((p) => p.in === 'body'))"
                     />
                     接收完整 JSON 请求体
                   </label>
                   <p v-if="editor.wholeBody" class="field-help">
                     在调用参数中填写 body，省略时发送无请求体的请求。
                   </p>
-                  <p v-else-if="editor.parameters.some((p) => p.in === 'body')" class="field-help">
-                    移除请求体字段映射后可启用完整请求体。
+                  <p v-else-if="editor.bodyTemplate || editor.parameters.some((p) => p.in === 'body')" class="field-help">
+                    清空请求体模板并移除请求体字段映射后可启用完整请求体。
                   </p>
+                  <template v-if="!editor.wholeBody && (editor.bodyTemplate || editor.parameters.some((p) => p.in === 'body'))">
+                    <label>
+                      JSON 请求体模板（可选）
+                      <textarea
+                        v-model.trim="editor.bodyTemplate"
+                        rows="5"
+                        maxlength="32768"
+                        spellcheck="false"
+                        class="code-input"
+                        placeholder='{"items":["{{value}}"]}'
+                      />
+                    </label>
+                    <p class="field-help">
+                      <span>用 <code v-pre>"{{value}}"</code> 引用名为 value 的必填或固定请求体参数。</span>
+                    </p>
+                  </template>
                 </div>
                 <div class="parameter-heading">
                   <div>

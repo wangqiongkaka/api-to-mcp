@@ -24,6 +24,7 @@ export interface Definition {
   method: string;
   timeoutSeconds: number;
   wholeBody?: boolean;
+  bodyTemplate?: string;
   parameters: Parameter[];
 }
 
@@ -94,6 +95,7 @@ export function definitionOf(d: Definition): Definition {
     method: d.method,
     timeoutSeconds: d.timeoutSeconds,
     wholeBody: d.wholeBody,
+    bodyTemplate: d.bodyTemplate,
     parameters: d.parameters.map((p) => ({ ...p })),
   };
 }

@@ -49,7 +49,9 @@ func (d Definition) OpenAPI() ([]byte, error) {
 		}
 	}
 	op := map[string]any{"operationId": d.Name, "summary": d.Description, "parameters": parameters, "responses": map[string]any{"default": map[string]any{"description": "上游接口响应；未声明响应结构。"}}}
-	if d.WholeBody {
+	if d.BodyTemplate != "" {
+		op["requestBody"] = map[string]any{"required": true, "content": map[string]any{"application/json": map[string]any{"schema": map[string]any{"type": "object"}}}}
+	} else if d.WholeBody {
 		op["requestBody"] = map[string]any{"content": map[string]any{"application/json": map[string]any{"schema": map[string]any{}}}}
 	} else if len(properties) > 0 {
 		op["requestBody"] = map[string]any{"required": len(required) > 0, "content": map[string]any{"application/json": map[string]any{"schema": map[string]any{"type": "object", "properties": properties, "required": required}}}}
@@ -63,6 +65,9 @@ func (d Definition) OpenAPI() ([]byte, error) {
 }
 
 func (d Definition) Higress() ([]byte, error) {
+	if d.BodyTemplate != "" {
+		return nil, fmt.Errorf("Higress 导出暂不支持请求体模板")
+	}
 	if d.WholeBody {
 		return nil, fmt.Errorf("Higress 导出暂不支持完整 JSON 请求体")
 	}
