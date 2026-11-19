@@ -18,6 +18,7 @@ type Parameter struct {
 	In          string `json:"in"`
 	Type        string `json:"type"`
 	Required    bool   `json:"required"`
+	NonEmpty    bool   `json:"nonEmpty,omitempty"`
 	Fixed       bool   `json:"fixed"`
 	Value       string `json:"value"`
 }
@@ -71,6 +72,9 @@ func (d Definition) Validate() error {
 		case "string", "boolean", "integer", "number", "object", "array":
 		default:
 			return fmt.Errorf("参数类型无效：%s", p.Name)
+		}
+		if p.NonEmpty && (p.Type != "array" || p.Fixed) {
+			return fmt.Errorf("仅客户端填写的数组参数可设置至少一项：%s", p.Name)
 		}
 		switch p.In {
 		case "query", "path", "header":
@@ -178,6 +182,9 @@ func (d Definition) InputSchema() map[string]any {
 		}
 		if p.Type == "array" {
 			schema["items"] = map[string]any{}
+			if p.NonEmpty {
+				schema["minItems"] = 1
+			}
 		}
 		properties[p.Name] = schema
 		if p.Required {
@@ -220,6 +227,9 @@ func (d Definition) BuildRequest(args map[string]any) (*http.Request, error) {
 					return nil, fmt.Errorf("参数 %s 应为安全范围内的整数；超过 ±9007199254740991 的 ID 请使用字符串类型", p.Name)
 				}
 				return nil, fmt.Errorf("参数 %s 的类型应为 %s", p.Name, p.Type)
+			}
+			if p.NonEmpty && len(value.([]any)) == 0 {
+				return nil, fmt.Errorf("参数 %s 至少需要一项", p.Name)
 			}
 		}
 		switch p.In {

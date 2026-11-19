@@ -834,6 +834,14 @@ tbody tr:last-child td {
   text-align: center;
   padding-top: 22px;
 }
+.parameter-table .array-constraint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
 .parameter-table input[type="checkbox"] {
   width: 15px;
   height: 15px;

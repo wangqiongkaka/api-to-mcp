@@ -64,6 +64,32 @@ func TestPathHeaderAndBody(t *testing.T) {
 	}
 }
 
+func TestRequiredArrayWithAtLeastOneItem(t *testing.T) {
+	d := sampleDefinition()
+	d.Method = "POST"
+	d.Parameters = []Parameter{{Name: "queryParams", In: "body", Type: "array", Required: true, NonEmpty: true}}
+	for _, args := range []map[string]any{{}, {"queryParams": []any{}}, {"queryParams": nil}} {
+		if _, err := d.BuildRequest(args); err == nil {
+			t.Fatalf("必填数组必须至少有一项，收到：%v", args)
+		}
+	}
+	if _, err := d.BuildRequest(map[string]any{"queryParams": []any{"value"}}); err != nil {
+		t.Fatal(err)
+	}
+	queryParams := d.InputSchema()["properties"].(map[string]any)["queryParams"].(map[string]any)
+	if queryParams["minItems"] != 1 {
+		t.Fatal("MCP 客户端未收到数组最少项数约束")
+	}
+	data, err := d.OpenAPI()
+	if err != nil || !strings.Contains(string(data), `"minItems": 1`) {
+		t.Fatalf("OpenAPI 未输出数组最少项数约束：%s，%v", data, err)
+	}
+	d.Parameters[0].NonEmpty = false
+	if _, err := d.BuildRequest(map[string]any{"queryParams": []any{}}); err != nil {
+		t.Fatalf("未启用至少一项的接口应继续接受空数组：%v", err)
+	}
+}
+
 func TestDefinitionRejectsInvalidInputs(t *testing.T) {
 	cases := map[string]func(*Definition){
 		"非 HTTP 地址": func(d *Definition) { d.URL = "file:///etc/passwd" },

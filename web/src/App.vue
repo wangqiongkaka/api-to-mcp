@@ -61,7 +61,9 @@ const schema = computed(() => {
     properties[p.name] = {
       type: p.type,
       description: p.description,
-      ...(p.type === "array" ? { items: {} } : {}),
+      ...(p.type === "array"
+        ? { items: {}, ...(p.nonEmpty ? { minItems: 1 } : {}) }
+        : {}),
       ...(p.type === "integer"
         ? { minimum: -9007199254740991, maximum: 9007199254740991 }
         : {}),
@@ -906,6 +908,7 @@ onUnmounted(() => {
                           <select
                             v-model="p.type"
                             :aria-label="`参数 ${index + 1} 类型`"
+                            @change="p.type !== 'array' && (p.nonEmpty = false)"
                           >
                             <option
                               v-for="type in [
@@ -921,11 +924,23 @@ onUnmounted(() => {
                               {{ type }}
                             </option>
                           </select>
+                          <label
+                            v-if="p.type === 'array' && !p.fixed"
+                            class="array-constraint"
+                          >
+                            <input
+                              v-model="p.nonEmpty"
+                              type="checkbox"
+                              :aria-label="`参数 ${index + 1} 至少一项`"
+                            />
+                            至少一项
+                          </label>
                         </td>
                         <td>
                           <select
                             v-model="p.fixed"
                             :aria-label="`参数 ${index + 1} 映射方式`"
+                            @change="p.fixed && (p.nonEmpty = false)"
                           >
                             <option :value="false">客户端填写</option>
                             <option :value="true">固定值</option></select

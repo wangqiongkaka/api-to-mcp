@@ -39,6 +39,9 @@ func (d Definition) OpenAPI() ([]byte, error) {
 		}
 		if p.Type == "array" {
 			s["items"] = map[string]any{}
+			if p.NonEmpty {
+				s["minItems"] = 1
+			}
 		}
 		if p.Fixed {
 			v, _ := fixedValue(p)
