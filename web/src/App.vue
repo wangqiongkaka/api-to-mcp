@@ -965,29 +965,33 @@ onUnmounted(() => {
                               {{ label }} · {{ type }}
                             </option>
                           </select>
-                          <label
+                          <div
                             v-if="p.type === 'array' && !p.fixed"
-                            class="array-constraint"
+                            class="array-options"
                           >
-                            <input
-                              v-model="p.nonEmpty"
-                              type="checkbox"
-                              :aria-label="`参数 ${index + 1} 至少一项`"
-                            />
-                            至少一项
-                          </label>
-                          <label
-                            v-if="p.type === 'array' && !p.fixed"
-                            class="array-item-field"
-                          >
-                            元素内非空数组字段
-                            <input
-                              v-model.trim="p.itemArrayField"
-                              :aria-label="`参数 ${index + 1} 元素内非空数组字段`"
-                              placeholder="如 value"
-                              maxlength="128"
-                            />
-                          </label>
+                            <label class="array-constraint">
+                              <input
+                                v-model="p.nonEmpty"
+                                type="checkbox"
+                                :aria-label="`参数 ${index + 1} 数组不为空`"
+                              />
+                              数组不为空
+                            </label>
+                            <label class="array-item-field">
+                              元素内数组字段
+                              <input
+                                v-model.trim="p.itemArrayField"
+                                :aria-label="`参数 ${index + 1} 元素内数组字段`"
+                                :aria-describedby="`array-item-help-${index}`"
+                                placeholder="如 value"
+                                maxlength="128"
+                              />
+                              <span
+                                :id="`array-item-help-${index}`"
+                                class="array-item-help"
+                              >选填。填写后，每项的该字段须为非空数组。</span>
+                            </label>
+                          </div>
                         </td>
                         <td>
                           <select
