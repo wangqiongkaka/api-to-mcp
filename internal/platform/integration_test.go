@@ -90,6 +90,15 @@ func TestPlatformIntegration(t *testing.T) {
 			http.Error(w, "missing secret", 401)
 			return
 		}
+		if r.Method == "POST" {
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, "invalid body", 400)
+				return
+			}
+			writeJSON(w, 200, string(body))
+			return
+		}
 		writeJSON(w, 200, map[string]any{"podIp": r.URL.Query().Get("podIp"), "showAllPods": r.URL.Query().Get("showAllPods")})
 	}))
 	defer upstream.Close()
@@ -241,6 +250,31 @@ func TestPlatformIntegration(t *testing.T) {
 	list, err = session.ListTools(ctx, nil)
 	if err != nil || len(list.Tools) != 0 {
 		t.Fatal("工具停用未生效")
+	}
+	whole := d
+	whole.Name, whole.Method, whole.WholeBody = "queryWithBody", "POST", true
+	var wholeTool ToolRecord
+	if code := jsonRequest(t, alice, "POST", server.URL+"/api/tools", whole, &wholeTool); code != 201 || !wholeTool.WholeBody {
+		t.Fatalf("完整请求体配置未保存：%d", code)
+	}
+	wholeAddress := fmt.Sprintf("%s/api/tools/%d", server.URL, wholeTool.ID)
+	if code := jsonRequest(t, alice, "POST", wholeAddress+"/publish", map[string]bool{"published": true}, nil); code != 200 {
+		t.Fatalf("完整请求体工具发布失败：%d", code)
+	}
+	for _, body := range []string{"", "null", `{"id":9007199254740993,"queryParams":[]}`} {
+		args := map[string]any{"podIp": "x"}
+		if body != "" {
+			args["body"] = json.RawMessage(body)
+		}
+		want, _ := json.Marshal(body)
+		var direct CallResult
+		if code := jsonRequest(t, alice, "POST", wholeAddress+"/call", map[string]any{"arguments": args}, &direct); code != 200 || strings.TrimSpace(direct.Body) != string(want) {
+			t.Fatalf("完整请求体试调用转发错误：%d，%q", code, direct.Body)
+		}
+		result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: whole.Name, Arguments: args})
+		if err != nil || result.IsError || !strings.Contains(result.Content[0].(*mcp.TextContent).Text, string(want)) {
+			t.Fatalf("完整请求体 MCP 调用转发错误：%v，%v", result, err)
+		}
 	}
 	other, err := New(ctx, cfg)
 	if err != nil {

@@ -13,14 +13,15 @@ import (
 )
 
 type Parameter struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	In          string `json:"in"`
-	Type        string `json:"type"`
-	Required    bool   `json:"required"`
-	NonEmpty    bool   `json:"nonEmpty,omitempty"`
-	Fixed       bool   `json:"fixed"`
-	Value       string `json:"value"`
+	Name           string `json:"name"`
+	Description    string `json:"description"`
+	In             string `json:"in"`
+	Type           string `json:"type"`
+	Required       bool   `json:"required"`
+	NonEmpty       bool   `json:"nonEmpty,omitempty"`
+	ItemArrayField string `json:"itemArrayField,omitempty"`
+	Fixed          bool   `json:"fixed"`
+	Value          string `json:"value"`
 }
 
 type Definition struct {
@@ -29,6 +30,7 @@ type Definition struct {
 	URL            string      `json:"url"`
 	Method         string      `json:"method"`
 	TimeoutSeconds int         `json:"timeoutSeconds"`
+	WholeBody      bool        `json:"wholeBody,omitempty"`
 	Parameters     []Parameter `json:"parameters"`
 }
 
@@ -59,7 +61,13 @@ func (d Definition) Validate() error {
 		return fmt.Errorf("超时须为 1–60 秒，最多配置 100 个参数")
 	}
 	seen, paths := map[string]bool{}, map[string]bool{}
-	hasBody, hasContentType := false, false
+	hasBody, hasContentType := d.WholeBody, false
+	if d.WholeBody {
+		if d.Method == "GET" || d.Method == "HEAD" {
+			return fmt.Errorf("GET 和 HEAD 不支持请求体参数")
+		}
+		seen["body"] = true
+	}
 	for _, p := range d.Parameters {
 		if !parameterName.MatchString(p.Name) || seen[strings.ToLower(p.Name)] {
 			return fmt.Errorf("参数名称无效或重复：%s", p.Name)
@@ -76,12 +84,18 @@ func (d Definition) Validate() error {
 		if p.NonEmpty && (p.Type != "array" || p.Fixed) {
 			return fmt.Errorf("仅客户端填写的数组参数可设置至少一项：%s", p.Name)
 		}
+		if p.ItemArrayField != "" && (p.Type != "array" || p.Fixed || !parameterName.MatchString(p.ItemArrayField)) {
+			return fmt.Errorf("元素内非空数组字段无效：%s", p.Name)
+		}
 		switch p.In {
 		case "query", "path", "header":
 			if p.Type == "array" || p.Type == "object" {
 				return fmt.Errorf("数组与对象参数只能放在 JSON 请求体中：%s", p.Name)
 			}
 		case "body":
+			if d.WholeBody {
+				return fmt.Errorf("使用完整请求体时，请移除请求体字段映射")
+			}
 			hasBody = true
 			if d.Method == "GET" || d.Method == "HEAD" {
 				return fmt.Errorf("GET 和 HEAD 不支持请求体参数")
@@ -168,30 +182,70 @@ func valueText(v any) string {
 	return string(b)
 }
 
+func (p Parameter) schema() map[string]any {
+	schema := map[string]any{"type": p.Type, "description": p.Description}
+	if p.Type == "integer" {
+		schema["minimum"] = -9007199254740991
+		schema["maximum"] = 9007199254740991
+	}
+	if p.Type == "array" {
+		items := map[string]any{}
+		if field := p.ItemArrayField; field != "" {
+			items["type"] = "object"
+			items["required"] = []string{field}
+			items["properties"] = map[string]any{
+				field: map[string]any{"type": "array", "minItems": 1, "items": map[string]any{}},
+			}
+		}
+		schema["items"] = items
+		if p.NonEmpty {
+			schema["minItems"] = 1
+		}
+	}
+	return schema
+}
+
 func (d Definition) InputSchema() map[string]any {
 	properties := map[string]any{}
+	if d.WholeBody {
+		properties["body"] = map[string]any{"description": "完整的 JSON 请求体，省略时不发送请求体"}
+	}
 	required := []string{}
 	for _, p := range d.Parameters {
 		if p.Fixed {
 			continue
 		}
-		schema := map[string]any{"type": p.Type, "description": p.Description}
-		if p.Type == "integer" {
-			schema["minimum"] = -9007199254740991
-			schema["maximum"] = 9007199254740991
-		}
-		if p.Type == "array" {
-			schema["items"] = map[string]any{}
-			if p.NonEmpty {
-				schema["minItems"] = 1
-			}
-		}
-		properties[p.Name] = schema
+		properties[p.Name] = p.schema()
 		if p.Required {
 			required = append(required, p.Name)
 		}
 	}
 	return map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}
+}
+
+func (d Definition) decodeArguments(data []byte) (map[string]any, error) {
+	var args map[string]any
+	if !d.WholeBody {
+		err := json.Unmarshal(data, &args)
+		return args, err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil || raw == nil {
+		return nil, err
+	}
+	args = make(map[string]any, len(raw))
+	for name, value := range raw {
+		if name == "body" {
+			args[name] = value
+			continue
+		}
+		var decoded any
+		if err := json.Unmarshal(value, &decoded); err != nil {
+			return nil, err
+		}
+		args[name] = decoded
+	}
+	return args, nil
 }
 
 func (d Definition) BuildRequest(args map[string]any) (*http.Request, error) {
@@ -205,6 +259,9 @@ func (d Definition) BuildRequest(args map[string]any) (*http.Request, error) {
 		}
 	}
 	for name := range args {
+		if d.WholeBody && name == "body" {
+			continue
+		}
 		if _, ok := dynamic[name]; !ok {
 			return nil, fmt.Errorf("不允许传入未知或固定参数：%s", name)
 		}
@@ -230,6 +287,15 @@ func (d Definition) BuildRequest(args map[string]any) (*http.Request, error) {
 			}
 			if p.NonEmpty && len(value.([]any)) == 0 {
 				return nil, fmt.Errorf("参数 %s 至少需要一项", p.Name)
+			}
+			if field := p.ItemArrayField; field != "" {
+				for i, item := range value.([]any) {
+					object, _ := item.(map[string]any)
+					values, ok := object[field].([]any)
+					if !ok || len(values) == 0 {
+						return nil, fmt.Errorf("参数 %s[%d].%s 必须是至少包含一项的数组", p.Name, i, field)
+					}
+				}
 			}
 		}
 		switch p.In {
@@ -257,8 +323,20 @@ func (d Definition) BuildRequest(args map[string]any) (*http.Request, error) {
 	}
 	u.RawQuery = q.Encode()
 	var data []byte
-	if len(body) > 0 {
+	if value, exists := args["body"]; d.WholeBody && exists {
+		if raw, ok := value.(json.RawMessage); ok && json.Valid(raw) {
+			data = raw
+		} else {
+			var err error
+			data, err = json.Marshal(value)
+			if err != nil {
+				return nil, fmt.Errorf("body 必须是有效的 JSON")
+			}
+		}
+	} else if len(body) > 0 {
 		data, _ = json.Marshal(body)
+	}
+	if len(data) > 0 {
 		headers.Set("Content-Type", "application/json")
 	}
 	r, err := http.NewRequest(d.Method, u.String(), bytes.NewReader(data))

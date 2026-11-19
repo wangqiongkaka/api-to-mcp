@@ -12,6 +12,7 @@ export interface Parameter {
   type: "string" | "boolean" | "integer" | "number" | "object" | "array";
   required: boolean;
   nonEmpty?: boolean;
+  itemArrayField?: string;
   fixed: boolean;
   value: string;
 }
@@ -22,6 +23,7 @@ export interface Definition {
   url: string;
   method: string;
   timeoutSeconds: number;
+  wholeBody?: boolean;
   parameters: Parameter[];
 }
 
@@ -91,6 +93,7 @@ export function definitionOf(d: Definition): Definition {
     url: d.url,
     method: d.method,
     timeoutSeconds: d.timeoutSeconds,
+    wholeBody: d.wholeBody,
     parameters: d.parameters.map((p) => ({ ...p })),
   };
 }

@@ -736,6 +736,16 @@ tbody tr:last-child td {
 .form-content label {
   font-size: 12px;
 }
+.form-content .whole-body-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.whole-body-control input[type="checkbox"] {
+  width: 15px;
+  min-height: 0;
+  accent-color: #245bd7;
+}
 .step-label {
   border: 1px solid #dce4ef;
   border-radius: 5px;
@@ -841,6 +851,11 @@ tbody tr:last-child td {
   margin-top: 6px;
   font-size: 12px;
   white-space: nowrap;
+}
+.parameter-table .array-item-field {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
 }
 .parameter-table input[type="checkbox"] {
   width: 15px;

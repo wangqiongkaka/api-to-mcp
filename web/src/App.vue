@@ -56,13 +56,24 @@ const publishedCount = computed(
 const schema = computed(() => {
   const properties: Record<string, unknown> = Object.create(null);
   const required: string[] = [];
+  if (editor.value?.wholeBody) {
+    properties.body = { description: "完整的 JSON 请求体，省略时不发送请求体" };
+  }
   for (const p of editor.value?.parameters ?? []) {
     if (p.fixed || !p.name) continue;
+    const field = p.itemArrayField;
+    const items = field
+      ? {
+          type: "object",
+          required: [field],
+          properties: { [field]: { type: "array", minItems: 1, items: {} } },
+        }
+      : {};
     properties[p.name] = {
       type: p.type,
       description: p.description,
       ...(p.type === "array"
-        ? { items: {}, ...(p.nonEmpty ? { minItems: 1 } : {}) }
+        ? { items, ...(p.nonEmpty ? { minItems: 1 } : {}) }
         : {}),
       ...(p.type === "integer"
         ? { minimum: -9007199254740991, maximum: 9007199254740991 }
@@ -194,6 +205,7 @@ function openEditor(definition: Definition, id: number | null = null) {
   result.value = null;
   callError.value = "";
   const sample: Record<string, unknown> = Object.create(null);
+  if (definition.wholeBody) sample.body = {};
   for (const p of definition.parameters) {
     if (p.fixed) continue;
     sample[p.name] =
@@ -345,7 +357,9 @@ async function runCall() {
       throw new Error("调用参数必须是 JSON 对象");
     result.value = await api<CallResult>(`/tools/${selectedId.value}/call`, {
       method: "POST",
-      body: JSON.stringify({ arguments: args }),
+      body: editor.value?.wholeBody
+        ? `{"arguments":${callArgs.value}}`
+        : JSON.stringify({ arguments: args }),
     });
   } catch (e) {
     callError.value = message(e);
@@ -835,10 +849,8 @@ onUnmounted(() => {
                       /></div
                   ></label>
                   <div class="field-help">
-                    <span
-                      >路径变量使用 <code>{id}</code>；请求体采用 JSON
-                      对象。</span
-                    ><button
+                    <span>路径变量使用 <code>{id}</code>。</span>
+                    <button
                       type="button"
                       class="text-button"
                       @click="extractQuery"
@@ -846,6 +858,23 @@ onUnmounted(() => {
                       提取 URL 查询参数
                     </button>
                   </div>
+                  <label
+                    v-if="editor.wholeBody || !['GET', 'HEAD'].includes(editor.method)"
+                    class="whole-body-control"
+                  >
+                    <input
+                      v-model="editor.wholeBody"
+                      type="checkbox"
+                      :disabled="!editor.wholeBody && editor.parameters.some((p) => p.in === 'body')"
+                    />
+                    接收完整 JSON 请求体
+                  </label>
+                  <p v-if="editor.wholeBody" class="field-help">
+                    在调用参数中填写 body，省略时发送无请求体的请求。
+                  </p>
+                  <p v-else-if="editor.parameters.some((p) => p.in === 'body')" class="field-help">
+                    移除请求体字段映射后可启用完整请求体。
+                  </p>
                 </div>
                 <div class="parameter-heading">
                   <div>
@@ -901,14 +930,14 @@ onUnmounted(() => {
                             <option value="query">查询参数</option>
                             <option value="path">路径参数</option>
                             <option value="header">请求头</option>
-                            <option value="body">请求体</option>
+                            <option value="body" :disabled="editor.wholeBody">请求体</option>
                           </select>
                         </td>
                         <td>
                           <select
                             v-model="p.type"
                             :aria-label="`参数 ${index + 1} 类型`"
-                            @change="p.type !== 'array' && (p.nonEmpty = false)"
+                            @change="if (p.type !== 'array') { p.nonEmpty = false; p.itemArrayField = ''; }"
                           >
                             <option
                               v-for="type in [
@@ -935,12 +964,24 @@ onUnmounted(() => {
                             />
                             至少一项
                           </label>
+                          <label
+                            v-if="p.type === 'array' && !p.fixed"
+                            class="array-item-field"
+                          >
+                            元素内非空数组字段
+                            <input
+                              v-model.trim="p.itemArrayField"
+                              :aria-label="`参数 ${index + 1} 元素内非空数组字段`"
+                              placeholder="如 value"
+                              maxlength="128"
+                            />
+                          </label>
                         </td>
                         <td>
                           <select
                             v-model="p.fixed"
                             :aria-label="`参数 ${index + 1} 映射方式`"
-                            @change="p.fixed && (p.nonEmpty = false)"
+                            @change="if (p.fixed) { p.nonEmpty = false; p.itemArrayField = ''; }"
                           >
                             <option :value="false">客户端填写</option>
                             <option :value="true">固定值</option></select

@@ -2,6 +2,7 @@ package platform
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"strings"
 
@@ -32,17 +33,7 @@ func (d Definition) OpenAPI() ([]byte, error) {
 		}
 	}
 	for _, p := range all {
-		s := map[string]any{"type": p.Type, "description": p.Description}
-		if p.Type == "integer" {
-			s["minimum"] = -9007199254740991
-			s["maximum"] = 9007199254740991
-		}
-		if p.Type == "array" {
-			s["items"] = map[string]any{}
-			if p.NonEmpty {
-				s["minItems"] = 1
-			}
-		}
+		s := p.schema()
 		if p.Fixed {
 			v, _ := fixedValue(p)
 			s["enum"] = []any{v}
@@ -58,7 +49,9 @@ func (d Definition) OpenAPI() ([]byte, error) {
 		}
 	}
 	op := map[string]any{"operationId": d.Name, "summary": d.Description, "parameters": parameters, "responses": map[string]any{"default": map[string]any{"description": "上游接口响应；未声明响应结构。"}}}
-	if len(properties) > 0 {
+	if d.WholeBody {
+		op["requestBody"] = map[string]any{"content": map[string]any{"application/json": map[string]any{"schema": map[string]any{}}}}
+	} else if len(properties) > 0 {
 		op["requestBody"] = map[string]any{"required": len(required) > 0, "content": map[string]any{"application/json": map[string]any{"schema": map[string]any{"type": "object", "properties": properties, "required": required}}}}
 	}
 	path := u.Path
@@ -70,6 +63,9 @@ func (d Definition) OpenAPI() ([]byte, error) {
 }
 
 func (d Definition) Higress() ([]byte, error) {
+	if d.WholeBody {
+		return nil, fmt.Errorf("Higress 导出暂不支持完整 JSON 请求体")
+	}
 	data, err := d.OpenAPI()
 	if err != nil {
 		return nil, err

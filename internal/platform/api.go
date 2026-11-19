@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"os"
@@ -216,16 +217,17 @@ func (a *App) call(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Arguments map[string]any `json:"arguments"`
+		Arguments json.RawMessage `json:"arguments"`
 	}
 	if !decode(w, r, &input) {
 		return
 	}
-	if input.Arguments == nil {
+	args, err := record.Definition.decodeArguments(input.Arguments)
+	if err != nil || args == nil {
 		fail(w, 400, "arguments 必须是 JSON 对象，无参数时传入空对象")
 		return
 	}
-	result, err := a.execute(r.Context(), record.Definition, input.Arguments)
+	result, err := a.execute(r.Context(), record.Definition, args)
 	if err != nil {
 		fail(w, 400, err.Error())
 		return

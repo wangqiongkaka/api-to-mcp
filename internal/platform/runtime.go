@@ -2,7 +2,6 @@ package platform
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -84,12 +83,9 @@ func (a *App) serveMCP(w http.ResponseWriter, r *http.Request) {
 			}
 			args := map[string]any{}
 			if len(request.Params.Arguments) > 0 {
-				if err = json.Unmarshal(request.Params.Arguments, &args); err != nil {
+				if args, err = tool.Definition.decodeArguments(request.Params.Arguments); err != nil || args == nil {
 					return toolError("工具参数必须是 JSON 对象"), nil
 				}
-			}
-			if args == nil {
-				return toolError("工具参数必须是 JSON 对象"), nil
 			}
 			result, err := a.execute(ctx, tool.Definition, args)
 			if err != nil {
