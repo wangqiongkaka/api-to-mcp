@@ -916,12 +916,12 @@ onUnmounted(() => {
                   <table class="parameter-table">
                     <thead>
                       <tr>
-                        <th>参数名称 / 描述</th>
-                        <th>位置</th>
-                        <th>类型</th>
-                        <th>映射方式 / 固定值</th>
-                        <th>必填</th>
-                        <th></th>
+                        <th scope="col">参数名称 / 描述</th>
+                        <th scope="col">位置</th>
+                        <th scope="col">类型</th>
+                        <th scope="col">映射方式 / 固定值</th>
+                        <th scope="col" class="checkbox-cell">必填</th>
+                        <th scope="col" aria-label="操作"></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -934,7 +934,7 @@ onUnmounted(() => {
                             placeholder="参数名称"
                           /><input
                             v-model="p.description"
-                            class="parameter-description"
+                            class="parameter-secondary-input"
                             :aria-label="`参数 ${index + 1} 描述`"
                             placeholder="补充参数用途（选填）"
                           />
@@ -1004,6 +1004,7 @@ onUnmounted(() => {
                           ><input
                             v-if="p.fixed"
                             v-model="p.value"
+                            class="parameter-secondary-input"
                             :type="p.in === 'header' ? 'password' : 'text'"
                             :aria-label="`参数 ${index + 1} 固定值`"
                             placeholder="输入固定值"
