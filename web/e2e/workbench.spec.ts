@@ -1,8 +1,17 @@
 import { test, expect } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { resolve } from "node:path";
 
 const screenshot = (name: string) =>
   resolve(import.meta.dirname, "../../docs/screenshots", name);
+
+async function registerMember(page: Page) {
+  await page.getByRole("button", { name: "创建账户", exact: true }).click();
+  await page.getByLabel("用户名", { exact: true }).fill(`browser_${Date.now()}`);
+  await page.getByLabel("密码", { exact: true }).fill("browser-test-password-123");
+  await page.getByRole("button", { name: "注册并进入工作台" }).click();
+  await expect(page.getByRole("heading", { name: "接口库" })).toBeVisible();
+}
 
 test("注册、配置、试调用、发布、导出和令牌管理", async ({ page }) => {
   const consoleErrors: string[] = [];
@@ -13,15 +22,7 @@ test("注册、配置、试调用、发布、导出和令牌管理", async ({ pa
     path: screenshot("login-desktop.png"),
     fullPage: true,
   });
-  await page.getByRole("button", { name: "创建账户", exact: true }).click();
-  await page
-    .getByLabel("用户名", { exact: true })
-    .fill(`browser_${Date.now()}`);
-  await page
-    .getByLabel("密码", { exact: true })
-    .fill("browser-test-password-123");
-  await page.getByRole("button", { name: "注册并进入工作台" }).click();
-  await expect(page.getByRole("heading", { name: "接口库" })).toBeVisible();
+  await registerMember(page);
   await expect(
     page.getByRole("button", { name: "用户管理", exact: true }),
   ).toHaveCount(0);
@@ -122,4 +123,59 @@ test("注册、配置、试调用、发布、导出和令牌管理", async ({ pa
   await page.getByRole("button", { name: "退出登录", exact: true }).click();
   await expect(page.getByRole("heading", { name: "欢迎回来" })).toBeVisible();
   expect(consoleErrors).toEqual([]);
+});
+
+test("请求体配置按需展开并保留已保存的模板", async ({ page }) => {
+  await page.goto("/");
+  await registerMember(page);
+  await page.getByRole("button", { name: "新建接口" }).click();
+  await page.getByLabel("工具名称").fill("searchItems");
+  await page.getByLabel("用途描述").fill("按编号搜索条目");
+  await page.getByLabel("接口地址", { exact: true }).fill("http://127.0.0.1:8099/items");
+  const method = page.getByLabel("请求方法");
+  await method.selectOption("POST");
+  await page.getByRole("button", { name: "添加参数" }).click();
+  await page.getByLabel("参数 1 名称").fill("itemId");
+
+  const body = page.getByRole("region", { name: "JSON 请求体", exact: true });
+  const location = page.getByLabel("参数 1 位置");
+  const type = page.getByLabel("参数 1 类型");
+  const wholeBody = page.getByLabel("接收完整 JSON 请求体");
+  const template = page.getByLabel("JSON 请求体模板", { exact: true });
+  await expect(body).toHaveCount(0);
+  await wholeBody.check();
+  await expect(location.getByRole("option", { name: "请求体", includeHidden: true })).toBeDisabled();
+  await wholeBody.uncheck();
+  await location.selectOption("body");
+  await expect(wholeBody).toBeDisabled();
+  await expect(body).toContainText("默认按参数名称生成 JSON 字段");
+  await expect(template).toBeHidden();
+  await method.selectOption("GET");
+  await expect(body).toContainText("GET 不支持请求体");
+  await method.selectOption("POST");
+  await expect(body).not.toContainText("不支持请求体");
+
+  await type.selectOption({ label: "整数 · integer" });
+  await expect(page.locator(".schema-preview")).toContainText('"type": "integer"');
+  await body.getByText("配置嵌套 JSON 模板", { exact: true }).press("Enter");
+  await expect(template).toBeVisible();
+  await expect(body.locator("code")).toHaveText('"{{itemId}}"');
+  const json = '{"items":["{{itemId}}"]}';
+  await template.fill(json);
+  await body.getByText("嵌套 JSON 模板（已填写）", { exact: true }).click();
+  await expect(template).toBeHidden();
+
+  await page.getByRole("button", { name: "保存草稿" }).click();
+  await expect(page.getByText("接口配置已保存")).toBeVisible();
+  await page.getByRole("button", { name: "返回接口库" }).click();
+  await page.getByRole("button", { name: "配置", exact: true }).click();
+  await expect(template).toBeHidden();
+  await body.getByText("嵌套 JSON 模板（已填写）", { exact: true }).click();
+  await expect(template).toHaveValue(json);
+  await expect(type).toHaveValue("integer");
+
+  await page.getByRole("button", { name: "返回接口库" }).click();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "删除", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "你的第一个 AI 工具，从这里开始" })).toBeVisible();
 });

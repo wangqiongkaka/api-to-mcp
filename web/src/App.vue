@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import type { AccessToken, CallResult, Definition, Tool, User } from "./types";
+import type { AccessToken, CallResult, Definition, Parameter, Tool, User } from "./types";
 import { definitionOf, emptyDefinition, podExample } from "./types";
 
 const user = ref<User | null>(null);
@@ -33,6 +33,23 @@ const createdToken = ref("");
 const tokenBusy = ref(false);
 const preview = ref<"schema" | "openapi" | "higress">("schema");
 const exported = ref("");
+const parameterTypes: Record<Parameter["type"], string> = {
+  string: "字符串",
+  boolean: "布尔值",
+  integer: "整数",
+  number: "数值",
+  object: "对象",
+  array: "数组",
+};
+const bodyParameters = computed(() =>
+  editor.value?.parameters.filter((p) => p.in === "body") ?? [],
+);
+const bodyTemplateParameters = computed(() =>
+  bodyParameters.value.filter((p) => p.name && (p.fixed || p.required)),
+);
+const canSendBody = computed(
+  () => editor.value?.method !== "GET" && editor.value?.method !== "HEAD",
+);
 const published = computed(
   () => tools.value.find((t) => t.id === selectedId.value)?.published ?? false,
 );
@@ -859,38 +876,22 @@ onUnmounted(() => {
                     </button>
                   </div>
                   <label
-                    v-if="editor.wholeBody || !['GET', 'HEAD'].includes(editor.method)"
+                    v-if="editor.wholeBody || canSendBody"
                     class="whole-body-control"
                   >
                     <input
                       v-model="editor.wholeBody"
                       type="checkbox"
-                      :disabled="!editor.wholeBody && (Boolean(editor.bodyTemplate) || editor.parameters.some((p) => p.in === 'body'))"
+                      :disabled="!editor.wholeBody && (Boolean(editor.bodyTemplate) || bodyParameters.length > 0)"
                     />
                     接收完整 JSON 请求体
                   </label>
                   <p v-if="editor.wholeBody" class="field-help">
                     在调用参数中填写 body，省略时发送无请求体的请求。
                   </p>
-                  <p v-else-if="editor.bodyTemplate || editor.parameters.some((p) => p.in === 'body')" class="field-help">
-                    清空请求体模板并移除请求体字段映射后可启用完整请求体。
+                  <p v-else-if="canSendBody && (editor.bodyTemplate || bodyParameters.length)" class="field-help">
+                    如需接收完整请求体，请先移除请求体参数并清空模板。
                   </p>
-                  <template v-if="!editor.wholeBody && (editor.bodyTemplate || editor.parameters.some((p) => p.in === 'body'))">
-                    <label>
-                      JSON 请求体模板（可选）
-                      <textarea
-                        v-model.trim="editor.bodyTemplate"
-                        rows="5"
-                        maxlength="32768"
-                        spellcheck="false"
-                        class="code-input"
-                        placeholder='{"items":["{{value}}"]}'
-                      />
-                    </label>
-                    <p class="field-help">
-                      <span>用 <code v-pre>"{{value}}"</code> 引用名为 value 的必填或固定请求体参数。</span>
-                    </p>
-                  </template>
                 </div>
                 <div class="parameter-heading">
                   <div>
@@ -952,21 +953,16 @@ onUnmounted(() => {
                         <td>
                           <select
                             v-model="p.type"
+                            class="parameter-type"
                             :aria-label="`参数 ${index + 1} 类型`"
                             @change="if (p.type !== 'array') { p.nonEmpty = false; p.itemArrayField = ''; }"
                           >
                             <option
-                              v-for="type in [
-                                'string',
-                                'boolean',
-                                'integer',
-                                'number',
-                                'object',
-                                'array',
-                              ]"
+                              v-for="(label, type) in parameterTypes"
                               :key="type"
+                              :value="type"
                             >
-                              {{ type }}
+                              {{ label }} · {{ type }}
                             </option>
                           </select>
                           <label
@@ -1032,6 +1028,43 @@ onUnmounted(() => {
                     </tbody>
                   </table>
                 </div>
+                <section
+                  v-if="!editor.wholeBody && (bodyParameters.length || editor.bodyTemplate)"
+                  class="mapped-body"
+                  aria-labelledby="mapped-body-title"
+                >
+                  <h2 id="mapped-body-title">JSON 请求体</h2>
+                  <p v-if="!canSendBody" class="body-method-warning">
+                    {{ editor.method }} 不支持请求体。请调整请求方法或参数位置。
+                  </p>
+                  <p v-if="editor.bodyTemplate">按下方模板生成上游请求体。</p>
+                  <p v-else>默认按参数名称生成 JSON 字段。嵌套对象或数组可使用模板。</p>
+                  <details v-if="!published || editor.bodyTemplate" class="body-template">
+                    <summary>{{ editor.bodyTemplate ? "嵌套 JSON 模板（已填写）" : "配置嵌套 JSON 模板" }}</summary>
+                    <label for="body-template" class="sr-only">JSON 请求体模板</label>
+                    <textarea
+                      id="body-template"
+                      v-model.trim="editor.bodyTemplate"
+                      rows="4"
+                      maxlength="32768"
+                      spellcheck="false"
+                      class="code-input"
+                      aria-describedby="body-template-help"
+                      placeholder='{"items":["{{value}}"]}'
+                    />
+                    <p id="body-template-help">
+                      将每个请求体参数设为必填或固定值，再用带双引号的占位符引用。替换时保留参数的 JSON 类型。
+                    </p>
+                    <p v-if="bodyTemplateParameters.length" class="body-template-tokens">
+                      <span>参数占位符</span>
+                      <code
+                        v-for="(p, index) in bodyTemplateParameters"
+                        :key="index"
+                        v-text="JSON.stringify(`{{${p.name}}}`)"
+                      />
+                    </p>
+                  </details>
+                </section>
               </fieldset>
             </form>
             <section class="panel call-panel">

@@ -45,7 +45,8 @@ button:focus-visible,
 a:focus-visible,
 input:focus-visible,
 select:focus-visible,
-textarea:focus-visible {
+textarea:focus-visible,
+.body-template summary:focus-visible {
   outline: 3px solid #83a6f4;
   outline-offset: 3px;
 }
@@ -737,12 +738,14 @@ tbody tr:last-child td {
   font-size: 12px;
 }
 .form-content .whole-body-control {
-  display: flex;
+  flex-direction: row;
   align-items: center;
-  gap: 6px;
+  justify-self: start;
+  gap: 8px;
 }
 .whole-body-control input[type="checkbox"] {
   width: 15px;
+  margin: 0;
   min-height: 0;
   accent-color: #245bd7;
 }
@@ -831,6 +834,45 @@ tbody tr:last-child td {
   min-height: 34px;
   border-color: #e2e7ef;
 }
+.parameter-table .parameter-type {
+  min-width: 122px;
+  padding-inline: 9px;
+  font-size: 12px;
+}
+@supports (appearance: base-select) {
+  .parameter-type,
+  .parameter-type::picker(select) {
+    appearance: base-select;
+  }
+  .parameter-type::picker(select) {
+    margin-block: 4px;
+    padding: 4px;
+    border: 1px solid #d8dfeb;
+    border-radius: 8px;
+    background: #fff;
+    color: #202d45;
+  }
+  .parameter-type::picker-icon {
+    color: var(--muted);
+  }
+  .parameter-type option {
+    min-height: 34px;
+    padding: 6px 9px;
+    border-radius: 5px;
+  }
+  .parameter-type option:checked {
+    background: #eaf1ff;
+    color: var(--blue);
+  }
+  .parameter-type option:is(:hover, :focus-visible) {
+    background: #edf2fa;
+    outline-offset: -2px;
+  }
+  .parameter-type option::checkmark {
+    order: 1;
+    margin-left: auto;
+  }
+}
 .parameter-table td:nth-child(4) input {
   margin-top: 7px;
 }
@@ -871,6 +913,57 @@ tbody tr:last-child td {
   color: #7c8b9f;
   font-size: 12px;
   border-top: 1px solid #edf0f5;
+}
+.mapped-body {
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 11px 11px;
+  background: #fafbfd;
+  padding: 16px 24px 18px;
+}
+.mapped-body h2 {
+  font-size: 14px;
+}
+.mapped-body p {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.mapped-body .body-method-warning {
+  color: #a15a12;
+}
+.body-template {
+  margin-top: 9px;
+}
+.body-template summary {
+  width: fit-content;
+  padding-block: 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 550;
+}
+.body-template summary:hover {
+  text-decoration: underline;
+}
+.body-template textarea {
+  display: block;
+  margin-block: 8px;
+  background: #fff;
+  tab-size: 2;
+}
+.body-template-tokens {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.body-template-tokens code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #edf2fa;
+  color: #202d45;
+  overflow-wrap: anywhere;
 }
 .preview-column {
   min-width: 0;
@@ -1340,7 +1433,8 @@ tbody tr:last-child td {
     gap: 18px;
   }
   .panel-heading,
-  .parameter-heading {
+  .parameter-heading,
+  .mapped-body {
     padding: 18px 16px;
   }
   .panel-heading h2 {
