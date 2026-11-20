@@ -234,8 +234,9 @@ test("请求体配置按需展开并保留已保存的模板", async ({ page }) 
   const type = page.getByLabel("参数 1 类型");
   const wholeBody = page.getByLabel("接收完整 JSON 请求体");
   const template = page.getByLabel("JSON 请求体模板", { exact: true });
-  await expect(body).toHaveCount(0);
+  await expect(template).toBeHidden();
   await wholeBody.check();
+  await expect(body).toHaveCount(0);
   await expect(location.getByRole("option", { name: "请求体", includeHidden: true })).toBeDisabled();
   await wholeBody.uncheck();
   await location.selectOption("body");
@@ -270,4 +271,61 @@ test("请求体配置按需展开并保留已保存的模板", async ({ page }) 
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "删除", exact: true }).click();
   await expect(page.getByRole("heading", { name: "你的第一个 AI 工具，从这里开始" })).toBeVisible();
+});
+
+test("从嵌套请求体模板生成参数并试调用", async ({ page }) => {
+  await page.goto("/");
+  await registerMember(page);
+  await page.getByRole("button", { name: "新建接口" }).click();
+  await page.getByLabel("工具名称").fill("searchInventory");
+  await page.getByLabel("用途描述").fill("按 IP 和机房搜索条目");
+  await page.getByLabel("接口地址", { exact: true }).fill("http://127.0.0.1:8099/items");
+  await page.getByLabel("请求方法").selectOption("POST");
+  const body = page.getByRole("region", { name: "JSON 请求体", exact: true });
+  await body.getByText("配置嵌套 JSON 模板", { exact: true }).click();
+  const template = body.getByLabel("JSON 请求体模板", { exact: true });
+  const extract = body.getByRole("button", { name: "从占位符生成参数" });
+  await expect(extract).toBeDisabled();
+
+  await template.fill('{"hostIps":');
+  await extract.click();
+  await expect(body.getByRole("alert")).toContainText("有效的 JSON 对象");
+
+  const json = JSON.stringify({
+    network: { ipAddresses: "{{hostIps}}" },
+    roomName: "{{room}}",
+    tags: ["{{room}}", "prefix-{{ignored}}"],
+  });
+  const names = page.getByRole("textbox", { name: /^参数 \d+ 名称$/ });
+  await template.fill(json);
+  await extract.click();
+  await expect(names).toHaveCount(2);
+  await expect(names.first()).toHaveValue("hostIps");
+  await expect(names.last()).toHaveValue("room");
+  await expect(page.getByLabel("参数 1 位置")).toHaveValue("body");
+  await expect(page.getByLabel("参数 1 必填")).toBeChecked();
+  await page.getByLabel("参数 1 类型").selectOption("array");
+  await extract.click();
+  await expect(names).toHaveCount(2);
+  await expect(page.getByLabel("参数 1 类型")).toHaveValue("array");
+
+  await template.fill('{"newField":"{{zone}}","conflict":"{{HostIps}}"}');
+  await extract.click();
+  await expect(body.getByRole("alert")).toContainText("名称冲突");
+  await expect(names).toHaveCount(2);
+  await template.fill(json);
+  await page.getByRole("button", { name: "保存草稿" }).click();
+  await expect(page.getByText("接口配置已保存")).toBeVisible();
+  await page.getByRole("button", { name: "返回接口库" }).click();
+  await page.getByRole("button", { name: "配置", exact: true }).click();
+  await expect(page.getByLabel("参数 1 类型")).toHaveValue("array");
+  await body.getByText("嵌套 JSON 模板（已填写）", { exact: true }).click();
+  await expect(template).toHaveValue(json);
+
+  await page.getByLabel("调用参数（JSON）").fill('{"hostIps":["192.0.2.1"],"room":"test-room"}');
+  await page.getByRole("button", { name: "运行测试" }).click();
+  await expect(page.getByText("HTTP 200", { exact: true })).toBeVisible();
+  await expect(page.locator(".call-result pre")).toContainText('"ipAddresses": [');
+  await expect(page.locator(".call-result pre")).toContainText('"192.0.2.1"');
+  await expect(page.locator(".call-result pre")).toContainText('"roomName": "test-room"');
 });
