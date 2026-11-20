@@ -7,6 +7,7 @@ const server = createServer((req, res) => {
     podIp: url.searchParams.get('podIp'),
     showAllPods: url.searchParams.get('showAllPods'),
     instance: { name: 'aquaman-api-6d98c', namespace: 'platform', status: 'Running' },
+    data: { list: [{ totalIp: '10.0.0.1' }, { totalIp: '10.0.0.2' }] },
   }))
 })
 server.listen(8099, '127.0.0.1')

@@ -35,7 +35,11 @@ func fail(w http.ResponseWriter, code int, message string) {
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
+	return decodeLimited(w, r, v, 256<<10)
+}
+
+func decodeLimited(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
 	if err := d.Decode(v); err != nil {

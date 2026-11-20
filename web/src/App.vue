@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import type { AccessToken, CallResult, Definition, Parameter, Tool, User } from "./types";
 import { definitionOf, emptyDefinition, podExample } from "./types";
+import { responsePaths } from "./outputPaths";
 
 const user = ref<User | null>(null);
 const loading = ref(true);
@@ -28,6 +29,9 @@ const calling = ref(false);
 const callArgs = ref("{}");
 const result = ref<CallResult | null>(null);
 const callError = ref("");
+const outputPath = ref("");
+const previewingOutput = ref(false);
+const outputResult = ref<{ fields: string; body?: string; error?: string } | null>(null);
 const tokenName = ref("");
 const createdToken = ref("");
 const tokenBusy = ref(false);
@@ -49,6 +53,16 @@ const bodyTemplateParameters = computed(() =>
 );
 const canSendBody = computed(
   () => editor.value?.method !== "GET" && editor.value?.method !== "HEAD",
+);
+const successfulResponse = computed(
+  () => result.value && result.value.statusCode >= 200 && result.value.statusCode < 300,
+);
+const availableOutputPaths = computed(
+  () => successfulResponse.value && result.value ? responsePaths(result.value.body) : [],
+);
+const serializedOutputFields = computed(() => JSON.stringify(editor.value?.outputFields ?? []));
+const currentOutput = computed(
+  () => outputResult.value?.fields === serializedOutputFields.value ? outputResult.value : null,
 );
 const published = computed(
   () => tools.value.find((t) => t.id === selectedId.value)?.published ?? false,
@@ -221,6 +235,8 @@ function openEditor(definition: Definition, id: number | null = null) {
   error.value = "";
   result.value = null;
   callError.value = "";
+  outputPath.value = "";
+  outputResult.value = null;
   const sample: Record<string, unknown> = Object.create(null);
   if (definition.wholeBody) sample.body = {};
   for (const p of definition.parameters) {
@@ -262,6 +278,20 @@ function addOutputField() {
   if (!editor.value) return;
   editor.value.outputFields ??= [];
   editor.value.outputFields.push({ name: "", source: "response", value: "" });
+}
+
+function addResponseField() {
+  const path = outputPath.value;
+  if (!editor.value || !path) return;
+  const fields = editor.value.outputFields ??= [];
+  const last = path.slice(path.lastIndexOf("/") + 1).replaceAll("~1", "/").replaceAll("~0", "~").trim();
+  const base = last && last !== "*" && last.length <= 40 ? last : "结果";
+  let name = base;
+  for (let index = 2; fields.some((field) => field.name === name); index++) {
+    name = `${base}_${index}`;
+  }
+  fields.push({ name, source: "response", value: path });
+  outputPath.value = "";
 }
 
 function removeOutputField(index: number) {
@@ -382,20 +412,44 @@ async function runCall() {
   calling.value = true;
   result.value = null;
   callError.value = "";
+  outputPath.value = "";
+  outputResult.value = null;
+  const id = selectedId.value;
   try {
     const args: unknown = JSON.parse(callArgs.value);
     if (args === null || typeof args !== "object" || Array.isArray(args))
       throw new Error("调用参数必须是 JSON 对象");
-    result.value = await api<CallResult>(`/tools/${selectedId.value}/call`, {
+    const response = await api<CallResult>(`/tools/${id}/call`, {
       method: "POST",
       body: editor.value?.wholeBody
-        ? `{"arguments":${callArgs.value}}`
-        : JSON.stringify({ arguments: args }),
+        ? `{"arguments":${callArgs.value},"raw":true}`
+        : JSON.stringify({ arguments: args, raw: true }),
     });
+    if (selectedId.value !== id) return;
+    result.value = response;
+    if (successfulResponse.value && editor.value?.outputFields?.length) await previewOutput();
   } catch (e) {
-    callError.value = message(e);
+    if (selectedId.value === id) callError.value = message(e);
   } finally {
     calling.value = false;
+  }
+}
+
+async function previewOutput() {
+  const response = result.value;
+  const fields = serializedOutputFields.value;
+  if (!response) return;
+  previewingOutput.value = true;
+  try {
+    const preview = await api<{ body: string }>("/output-preview", {
+      method: "POST",
+      body: `{"body":${JSON.stringify(response.body)},"fields":${fields}}`,
+    });
+    if (result.value === response) outputResult.value = { fields, body: preview.body };
+  } catch (e) {
+    if (result.value === response) outputResult.value = { fields, error: message(e) };
+  } finally {
+    previewingOutput.value = false;
   }
 }
 
@@ -1088,11 +1142,27 @@ onUnmounted(() => {
                   <div class="parameter-heading">
                     <div>
                       <h2 id="output-fields-title">输出字段</h2>
-                      <p>留空时返回原始响应。配置后，试调用与 MCP 的成功结果只返回这些字段。</p>
+                      <p>可从试调用的原始响应选字段，修改输出名称后预览。MCP 使用已保存的输出配置。</p>
                     </div>
                     <button type="button" class="button small" @click="addOutputField">
                       ＋ 添加输出字段
                     </button>
+                  </div>
+                  <div v-if="availableOutputPaths.length" class="form-content">
+                    <div class="output-picker">
+                      <label>
+                        从试调用结果选字段
+                        <select v-model="outputPath">
+                          <option value="">选择响应路径</option>
+                          <option v-for="{ path, all } in availableOutputPaths" :key="path" :value="path">
+                            {{ path }}{{ all ? '（全部记录）' : '' }}
+                          </option>
+                        </select>
+                      </label>
+                      <button type="button" class="button small" :disabled="!outputPath || (editor.outputFields?.length ?? 0) >= 100" @click="addResponseField">
+                        添加所选字段
+                      </button>
+                    </div>
                   </div>
                   <div v-if="editor.outputFields?.length" class="form-content">
                     <div v-for="(field, index) in editor.outputFields" :key="index" class="output-field">
@@ -1114,7 +1184,7 @@ onUnmounted(() => {
                           required
                           spellcheck="false"
                           maxlength="32768"
-                          :placeholder="field.source === 'response' ? '如 /data/users/0/id' : '如 &quot;crm&quot;、true 或 1'"
+                          :placeholder="field.source === 'response' ? '如 /data/users/*/id' : '如 &quot;crm&quot;、true 或 1'"
                         />
                       </label>
                       <button
@@ -1174,7 +1244,21 @@ onUnmounted(() => {
                     ><span>{{ result.durationMs }} ms</span
                     ><span>{{ result.contentType || "无内容类型" }}</span>
                   </div>
-                  <pre>{{ result.outputMapped ? result.body : formattedBody(result.body) }}</pre>
+                  <details open>
+                    <summary>原始响应</summary>
+                    <pre>{{ formattedBody(result.body) }}</pre>
+                  </details>
+                  <section v-if="successfulResponse && editor.outputFields?.length" class="custom-output" aria-labelledby="custom-output-title">
+                    <div class="output-result-heading">
+                      <h3 id="custom-output-title">自定义结果</h3>
+                      <button type="button" class="button small" :disabled="previewingOutput" @click="previewOutput">
+                        {{ previewingOutput ? '生成中…' : '预览自定义结果' }}
+                      </button>
+                    </div>
+                    <p v-if="!currentOutput && !previewingOutput">用本次原始响应生成预览。</p>
+                    <div v-if="currentOutput?.error" class="alert error" role="alert">{{ currentOutput.error }}</div>
+                    <pre v-else-if="currentOutput?.body" aria-label="自定义结果 JSON">{{ currentOutput.body }}</pre>
+                  </section>
                 </div>
               </div>
             </section>

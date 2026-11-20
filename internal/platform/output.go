@@ -92,7 +92,12 @@ func mapOutput(fields []OutputField, data []byte) ([]byte, error) {
 }
 
 func outputValue(value any, pointer string) (any, bool) {
-	for part := range strings.SplitSeq(strings.TrimPrefix(pointer, "/"), "/") {
+	for pointer != "" {
+		part, rest, more := strings.Cut(pointer[1:], "/")
+		pointer = ""
+		if more {
+			pointer = "/" + rest
+		}
 		part = pointerUnescape.Replace(part)
 		switch node := value.(type) {
 		case map[string]any:
@@ -102,6 +107,17 @@ func outputValue(value any, pointer string) (any, bool) {
 				return nil, false
 			}
 		case []any:
+			if part == "*" {
+				selected := make([]any, len(node))
+				for index, item := range node {
+					var ok bool
+					selected[index], ok = outputValue(item, pointer)
+					if !ok {
+						return nil, false
+					}
+				}
+				return selected, true
+			}
 			index, err := strconv.Atoi(part)
 			if err != nil || index < 0 || index >= len(node) || strconv.Itoa(index) != part {
 				return nil, false

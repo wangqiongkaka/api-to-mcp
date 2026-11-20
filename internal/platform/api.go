@@ -46,6 +46,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/tools/{id}", a.requireUser(a.tool))
 	mux.HandleFunc("POST /api/tools/{id}/publish", a.requireUser(a.publish))
 	mux.HandleFunc("POST /api/tools/{id}/call", a.requireUser(a.call))
+	mux.HandleFunc("POST /api/output-preview", a.requireUser(outputPreview))
 	mux.HandleFunc("GET /api/tools/{id}/export", a.requireUser(a.export))
 	mux.HandleFunc("GET /api/tokens", a.requireUser(a.tokens))
 	mux.HandleFunc("POST /api/tokens", a.requireUser(a.tokens))
@@ -218,6 +219,7 @@ func (a *App) call(w http.ResponseWriter, r *http.Request) {
 	}
 	var input struct {
 		Arguments json.RawMessage `json:"arguments"`
+		Raw       bool            `json:"raw"`
 	}
 	if !decode(w, r, &input) {
 		return
@@ -227,12 +229,40 @@ func (a *App) call(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "arguments 必须是 JSON 对象，无参数时传入空对象")
 		return
 	}
+	if input.Raw {
+		record.OutputFields = nil
+	}
 	result, err := a.execute(r.Context(), record.Definition, args)
 	if err != nil {
 		fail(w, 400, err.Error())
 		return
 	}
 	writeJSON(w, 200, result)
+}
+
+func outputPreview(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Body   string        `json:"body"`
+		Fields []OutputField `json:"fields"`
+	}
+	// JSON 字符串中一个控制字符最多占用六个字节。
+	if !decodeLimited(w, r, &input, 6*maxResponseBytes+(256<<10)) {
+		return
+	}
+	if len(input.Body) > maxResponseBytes {
+		fail(w, 400, "原始响应超过 2 MiB 限制")
+		return
+	}
+	if err := validateOutputFields(input.Fields); err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	result, err := mapOutput(input.Fields, []byte(input.Body))
+	if err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]string{"body": string(result)})
 }
 
 func (a *App) export(w http.ResponseWriter, r *http.Request) {

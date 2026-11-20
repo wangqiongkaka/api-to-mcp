@@ -55,3 +55,22 @@ func TestDefinitionRejectsInvalidOutputFields(t *testing.T) {
 		}
 	}
 }
+
+func TestOutputFieldsCanExtractEveryArrayItem(t *testing.T) {
+	fields := []OutputField{
+		{Name: "all", Source: "response", Value: "/data/list/*/id"},
+		{Name: "first", Source: "response", Value: "/data/list/0/id"},
+		{Name: "literal", Source: "response", Value: "/data/*"},
+	}
+	got, err := mapOutput(fields, []byte(`{"data":{"list":[{"id":9007199254740993},{"id":null}],"*":"literal"}}`))
+	if err != nil || string(got) != `{"all":[9007199254740993,null],"first":9007199254740993,"literal":"literal"}` {
+		t.Fatalf("应按原顺序提取，保留数字精度和 null：%s，%v", got, err)
+	}
+	got, err = mapOutput(fields[:1], []byte(`{"data":{"list":[]}}`))
+	if err != nil || string(got) != `{"all":[]}` {
+		t.Fatalf("空列表应提取为空数组：%s，%v", got, err)
+	}
+	if _, err := mapOutput(fields[:1], []byte(`{"data":{"list":[{"id":1},{}]}}`)); err == nil {
+		t.Fatal("缺失字段的记录被静默跳过")
+	}
+}
