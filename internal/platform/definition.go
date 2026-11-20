@@ -104,7 +104,7 @@ func (d Definition) Validate() error {
 			}
 			hasBody = true
 			if d.BodyTemplate != "" {
-				if !p.Fixed && !p.Required {
+				if !p.Fixed && !p.Required && p.Type != "array" {
 					return fmt.Errorf("模板中的请求体参数必须为必填或固定值：%s", p.Name)
 				}
 				templateParams[p.Name] = nil
@@ -296,6 +296,9 @@ func (d Definition) BuildRequest(args map[string]any) (*http.Request, error) {
 			if !exists {
 				if p.Required {
 					return nil, fmt.Errorf("缺少必填参数：%s", p.Name)
+				}
+				if d.BodyTemplate != "" && p.In == "body" && p.Type == "array" {
+					body[p.Name] = omittedTemplateArray{}
 				}
 				continue
 			}

@@ -51,7 +51,7 @@ const bodyParameters = computed(() =>
   editor.value?.parameters.filter((p) => p.in === "body") ?? [],
 );
 const bodyTemplateParameters = computed(() =>
-  bodyParameters.value.filter((p) => p.name && (p.fixed || p.required)),
+  bodyParameters.value.filter((p) => p.name && (p.fixed || p.required || p.type === "array")),
 );
 const canSendBody = computed(
   () => editor.value?.method !== "GET" && editor.value?.method !== "HEAD",
@@ -248,7 +248,7 @@ function openEditor(definition: Definition, id: number | null = null) {
   const sample: Record<string, unknown> = Object.create(null);
   if (definition.wholeBody) sample.body = {};
   for (const p of definition.parameters) {
-    if (p.fixed) continue;
+    if (p.fixed || (definition.bodyTemplate && p.in === "body" && p.type === "array" && !p.required)) continue;
     sample[p.name] =
       p.type === "boolean"
         ? false
@@ -1221,7 +1221,7 @@ onUnmounted(() => {
                     >从占位符生成参数</button>
                     <div v-if="bodyExtractionError" class="alert error" role="alert">{{ bodyExtractionError }}</div>
                     <p id="body-template-help">
-                      将每个请求体参数设为必填或固定值，再用带双引号的占位符引用。替换时保留参数的 JSON 类型。
+                      用带双引号的占位符引用每个请求体参数。数组参数可选填，省略时不发送引用它的数组条件或字段。其余参数须设为必填或固定值。
                     </p>
                     <p v-if="bodyTemplateParameters.length" class="body-template-tokens">
                       <span>参数占位符</span>

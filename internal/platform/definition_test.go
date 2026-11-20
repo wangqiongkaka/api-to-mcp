@@ -219,6 +219,56 @@ func TestBodyTemplateMapsClientValueIntoUpstreamArray(t *testing.T) {
 	}
 }
 
+func TestBodyTemplateOmitsUnprovidedOptionalArray(t *testing.T) {
+	d := sampleDefinition()
+	d.Method = "POST"
+	d.Parameters = []Parameter{
+		{Name: "ips", In: "body", Type: "array", NonEmpty: true},
+		{Name: "limit", In: "body", Type: "integer", Required: true},
+	}
+	d.BodyTemplate = `{
+		"ips": "{{ips}}",
+		"queryParams": [
+			{"uniqueCode":"ip","value":"{{ips}}"},
+			{"uniqueCode":"wrapped","value":["{{ips}}"]},
+			{"uniqueCode":"limit","value":"{{limit}}"}
+		],
+		"values": [null, "{{ips}}"]
+	}`
+	if err := d.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if required := d.InputSchema()["required"].([]string); len(required) != 1 || required[0] != "limit" {
+		t.Fatalf("必填参数不符：%v", required)
+	}
+
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{"省略数组", map[string]any{"limit": float64(7)}, `{"queryParams":[{"uniqueCode":"limit","value":7}],"values":[null]}`},
+		{"传入数组", map[string]any{"limit": float64(7), "ips": []any{"example"}}, `{"ips":["example"],"queryParams":[{"uniqueCode":"ip","value":["example"]},{"uniqueCode":"wrapped","value":[["example"]]},{"uniqueCode":"limit","value":7}],"values":[null,["example"]]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := d.BuildRequest(tc.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.Body.Close()
+			body, err := io.ReadAll(r.Body)
+			if err != nil || string(body) != tc.want {
+				t.Fatalf("请求体 = %s，期望 %s，错误 %v", body, tc.want, err)
+			}
+		})
+	}
+	for _, invalid := range []any{nil, []any{}} {
+		if _, err := d.BuildRequest(map[string]any{"limit": float64(7), "ips": invalid}); err == nil {
+			t.Fatalf("接受了无效数组：%v", invalid)
+		}
+	}
+}
+
 func TestIntegerPrecisionBoundary(t *testing.T) {
 	d := sampleDefinition()
 	d.Parameters[1].Type = "integer"
