@@ -140,7 +140,25 @@ test("从原始试调用响应选择字段并预览自定义输出", async ({ pa
   await page.getByRole("button", { name: "保存草稿" }).click();
   await trial.click();
   const paths = output.getByLabel("从试调用结果选字段");
+  await expect(paths.locator("option")).toHaveText([
+    "选择响应路径",
+    "podIp",
+    "showAllPods",
+    "instance",
+    "↳ name",
+    "↳ namespace",
+    "↳ status",
+    "data",
+    "↳ list",
+    "↳ 全部记录",
+    "↳ totalIp",
+    "↳ 0",
+    "↳ totalIp",
+    "↳ 1",
+    "↳ totalIp",
+  ]);
   await paths.selectOption("/data/list/*/totalIp");
+  await expect(paths.locator("option:checked")).toHaveText("/data/list/*/totalIp（全部记录）");
   await output.getByRole("button", { name: "添加所选字段" }).click();
   await output.getByLabel("输出名称").first().fill("ipList");
   await add.click();
