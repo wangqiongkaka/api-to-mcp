@@ -29,7 +29,7 @@ const calling = ref(false);
 const callArgs = ref("{}");
 const result = ref<CallResult | null>(null);
 const callError = ref("");
-const outputPath = ref("");
+const selectedOutputPaths = ref<string[]>([]);
 const previewingOutput = ref(false);
 const outputResult = ref<{ fields: string; body?: string; error?: string } | null>(null);
 const tokenName = ref("");
@@ -60,6 +60,7 @@ const successfulResponse = computed(
 const availableOutputPaths = computed(
   () => successfulResponse.value && result.value ? responsePaths(result.value.body) : [],
 );
+const outputFieldSlots = computed(() => Math.max(0, 100 - (editor.value?.outputFields?.length ?? 0)));
 const serializedOutputFields = computed(() => JSON.stringify(editor.value?.outputFields ?? []));
 const currentOutput = computed(
   () => outputResult.value?.fields === serializedOutputFields.value ? outputResult.value : null,
@@ -235,7 +236,7 @@ function openEditor(definition: Definition, id: number | null = null) {
   error.value = "";
   result.value = null;
   callError.value = "";
-  outputPath.value = "";
+  selectedOutputPaths.value = [];
   outputResult.value = null;
   const sample: Record<string, unknown> = Object.create(null);
   if (definition.wholeBody) sample.body = {};
@@ -280,18 +281,20 @@ function addOutputField() {
   editor.value.outputFields.push({ name: "", source: "response", value: "" });
 }
 
-function addResponseField() {
-  const path = outputPath.value;
-  if (!editor.value || !path) return;
+function addResponseFields() {
+  const paths = selectedOutputPaths.value;
+  if (!editor.value || !paths.length || paths.length > outputFieldSlots.value) return;
   const fields = editor.value.outputFields ??= [];
-  const last = path.slice(path.lastIndexOf("/") + 1).replaceAll("~1", "/").replaceAll("~0", "~").trim();
-  const base = last && last !== "*" && last.length <= 40 ? last : "结果";
-  let name = base;
-  for (let index = 2; fields.some((field) => field.name === name); index++) {
-    name = `${base}_${index}`;
+  for (const path of paths) {
+    const last = path.slice(path.lastIndexOf("/") + 1).replaceAll("~1", "/").replaceAll("~0", "~").trim();
+    const base = last && last !== "*" && last.length <= 40 ? last : "结果";
+    let name = base;
+    for (let index = 2; fields.some((field) => field.name === name); index++) {
+      name = `${base}_${index}`;
+    }
+    fields.push({ name, source: "response", value: path });
   }
-  fields.push({ name, source: "response", value: path });
-  outputPath.value = "";
+  selectedOutputPaths.value = [];
 }
 
 function removeOutputField(index: number) {
@@ -412,7 +415,7 @@ async function runCall() {
   calling.value = true;
   result.value = null;
   callError.value = "";
-  outputPath.value = "";
+  selectedOutputPaths.value = [];
   outputResult.value = null;
   const id = selectedId.value;
   try {
@@ -1150,24 +1153,42 @@ onUnmounted(() => {
                   </div>
                   <div v-if="availableOutputPaths.length" class="form-content">
                     <div class="output-picker">
-                      <label>
-                        从试调用结果选字段
-                        <select v-model="outputPath">
-                          <option value="">选择响应路径</option>
-                          <option
+                      <details>
+                        <summary>
+                          <span>从试调用结果选字段</span>
+                          <span v-if="selectedOutputPaths.length"> · 已选 {{ selectedOutputPaths.length }} 项</span>
+                        </summary>
+                        <div class="output-path-list" role="group" aria-label="可选字段">
+                          <label
                             v-for="{ path, all, label } in availableOutputPaths"
                             :key="path"
-                            :value="path"
-                            :aria-label="path + (all ? '（全部记录）' : '')"
+                            :title="path + (all ? '（全部记录）' : '')"
                           >
-                            {{ outputPath === path ? path + (all ? '（全部记录）' : '') : label }}
-                          </option>
-                        </select>
-                      </label>
-                      <button type="button" class="button small" :disabled="!outputPath || (editor.outputFields?.length ?? 0) >= 100" @click="addResponseField">
+                            <input
+                              type="checkbox"
+                              v-model="selectedOutputPaths"
+                              :value="path"
+                              :aria-label="path + (all ? '（全部记录）' : '')"
+                            />
+                            <span>
+                              {{ label }}
+                              <small v-if="selectedOutputPaths.includes(path)">{{ path + (all ? '（全部记录）' : '') }}</small>
+                            </span>
+                          </label>
+                        </div>
+                      </details>
+                      <button
+                        type="button"
+                        class="button small"
+                        :disabled="!selectedOutputPaths.length || selectedOutputPaths.length > outputFieldSlots"
+                        @click="addResponseFields"
+                      >
                         添加所选字段
                       </button>
                     </div>
+                    <p v-if="selectedOutputPaths.length > outputFieldSlots" class="field-help" role="status">
+                      最多配置 100 个输出字段，还可添加 {{ outputFieldSlots }} 项。请减少所选字段。
+                    </p>
                   </div>
                   <div v-if="editor.outputFields?.length" class="form-content">
                     <div v-for="(field, index) in editor.outputFields" :key="index" class="output-field">

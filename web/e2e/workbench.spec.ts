@@ -125,7 +125,7 @@ test("注册、配置、试调用、发布、导出和令牌管理", async ({ pa
   expect(consoleErrors).toEqual([]);
 });
 
-test("从原始试调用响应选择字段并预览自定义输出", async ({ page }, testInfo) => {
+test("从原始试调用响应多选字段并预览自定义输出", async ({ page }, testInfo) => {
   await page.goto("/");
   await registerMember(page);
   await page.getByRole("button", { name: "使用 Pod 查询示例" }).click();
@@ -139,9 +139,13 @@ test("从原始试调用响应选择字段并预览自定义输出", async ({ pa
   });
   await page.getByRole("button", { name: "保存草稿" }).click();
   await trial.click();
-  const paths = output.getByLabel("从试调用结果选字段");
-  await expect(paths.locator("option")).toHaveText([
-    "选择响应路径",
+  const picker = output.locator("summary").filter({ hasText: "从试调用结果选字段" });
+  const paths = output.getByRole("group", { name: "可选字段" });
+  const addSelected = output.getByRole("button", { name: "添加所选字段" });
+  await expect(addSelected).toBeDisabled();
+  await picker.press("Enter");
+  await expect(paths).toBeVisible();
+  await expect(paths.locator("label")).toHaveText([
     "podIp",
     "showAllPods",
     "instance",
@@ -157,16 +161,26 @@ test("从原始试调用响应选择字段并预览自定义输出", async ({ pa
     "↳ 1",
     "↳ totalIp",
   ]);
-  await paths.selectOption("/data/list/*/totalIp");
-  await expect(paths.locator("option:checked")).toHaveText("/data/list/*/totalIp（全部记录）");
-  await output.getByRole("button", { name: "添加所选字段" }).click();
+  const all = paths.getByRole("checkbox", { name: "/data/list/*/totalIp（全部记录）", exact: true });
+  await all.press("Space");
+  await expect(all).toBeChecked();
+  await paths.getByRole("checkbox", { name: "/data/list/0/totalIp", exact: true }).check();
+  const status = paths.getByRole("checkbox", { name: "/instance/status", exact: true });
+  await status.check();
+  await status.uncheck();
+  await expect(output.getByText("· 已选 2 项")).toBeVisible();
+  await addSelected.click();
+  await expect(paths.getByRole("checkbox", { checked: true })).toHaveCount(0);
+  await expect(addSelected).toBeDisabled();
+  await expect(output.getByLabel("输出名称").nth(1)).toHaveValue("totalIp_2");
+  await expect(output.getByLabel("响应路径").nth(1)).toHaveValue("/data/list/0/totalIp");
   await output.getByLabel("输出名称").first().fill("ipList");
   await add.click();
-  await output.getByLabel("输出名称").nth(1).fill("source");
-  await output.getByLabel("值来源").nth(1).selectOption("fixed");
+  await output.getByLabel("输出名称").nth(2).fill("source");
+  await output.getByLabel("值来源").nth(2).selectOption("fixed");
   await output.getByLabel("固定 JSON 值").fill('"inventory"');
   const custom = page.getByLabel("自定义结果 JSON");
-  const want = '{"ipList":["10.0.0.1","10.0.0.2"],"source":"inventory"}';
+  const want = '{"ipList":["10.0.0.1","10.0.0.2"],"source":"inventory","totalIp_2":"10.0.0.1"}';
   await page.getByRole("button", { name: "预览自定义结果" }).click();
   await expect(custom).toHaveText(want);
   expect(calls).toBe(1);
@@ -179,15 +193,19 @@ test("从原始试调用响应选择字段并预览自定义输出", async ({ pa
   await expect(page.getByText("接口配置已保存")).toBeVisible();
   await page.getByRole("button", { name: "返回接口库" }).click();
   await page.getByRole("button", { name: "配置", exact: true }).click();
-  await expect(output.getByLabel("响应路径")).toHaveValue("/data/list/*/totalIp");
+  await expect(output.getByLabel("响应路径").first()).toHaveValue("/data/list/*/totalIp");
+  await expect(output.getByLabel("响应路径").nth(1)).toHaveValue("/data/list/0/totalIp");
   await expect(output.getByLabel("固定 JSON 值")).toHaveValue('"inventory"');
   await trial.click();
   await expect(custom).toHaveText(want);
   await page.setViewportSize({ width: 393, height: 852 });
+  await picker.click();
+  await expect(paths).toBeVisible();
   await expect(output.getByLabel("固定 JSON 值")).toBeVisible();
   await expect(page.locator(".toast")).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await output.screenshot({ path: testInfo.outputPath("output-fields-mobile.png") });
+  await output.getByRole("button", { name: "删除输出字段 3" }).click();
   await output.getByRole("button", { name: "删除输出字段 2" }).click();
   await output.getByRole("button", { name: "删除输出字段 1" }).click();
   await page.getByRole("button", { name: "保存草稿" }).click();
