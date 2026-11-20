@@ -1154,8 +1154,13 @@ onUnmounted(() => {
                         从试调用结果选字段
                         <select v-model="outputPath">
                           <option value="">选择响应路径</option>
-                          <option v-for="{ path, all } in availableOutputPaths" :key="path" :value="path">
-                            {{ path }}{{ all ? '（全部记录）' : '' }}
+                          <option
+                            v-for="{ path, all, label } in availableOutputPaths"
+                            :key="path"
+                            :value="path"
+                            :aria-label="path + (all ? '（全部记录）' : '')"
+                          >
+                            {{ outputPath === path ? path + (all ? '（全部记录）' : '') : label }}
                           </option>
                         </select>
                       </label>
