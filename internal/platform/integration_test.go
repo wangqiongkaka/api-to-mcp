@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -337,11 +338,97 @@ func TestPlatformIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	persisted, err := other.getTool(ctx, tool.ID, aliceUser)
+	persisted, err := other.getTool(ctx, tool.ID, aliceUser, false)
 	other.Close()
 	if err != nil || persisted.Name != d.Name {
 		t.Fatal("数据库配置未持久化")
 	}
+	t.Run("管理员共享接口与成员自有接口隔离", func(t *testing.T) {
+		var shared, own ToolRecord
+		check := func(client *http.Client, method, path string, body, out any, want int) {
+			t.Helper()
+			if got := jsonRequest(t, client, method, server.URL+path, body, out); got != want {
+				t.Fatalf("%s %s 返回 %d，预期 %d", method, path, got, want)
+			}
+		}
+		check(admin, "POST", "/api/tools", mapped, &shared, 201)
+		check(bob, "POST", "/api/tools", d, &own, 201)
+		if shared.Public || own.Public {
+			t.Fatal("新建接口默认公开")
+		}
+		sharedPath := fmt.Sprintf("/api/tools/%d", shared.ID)
+		ownPath := fmt.Sprintf("/api/tools/%d", own.ID)
+		share := map[string]bool{"public": true}
+		publish := map[string]bool{"published": true}
+		args := map[string]any{"podIp": "192.0.2.17"}
+		call := map[string]any{"arguments": args, "raw": true}
+		publicName := fmt.Sprintf("%s.public.%d", mapped.Name, shared.ID)
+		check(bob, "PATCH", ownPath+"/visibility", share, nil, 403)
+		check(admin, "PATCH", ownPath+"/visibility", share, nil, 404)
+		check(admin, "PATCH", sharedPath+"/visibility", map[string]bool{}, nil, 400)
+		check(admin, "PATCH", sharedPath+"/visibility", share, nil, 200)
+		check(bob, "POST", ownPath+"/publish", publish, nil, 200)
+
+		checkVisibility := func(visible bool) {
+			t.Helper()
+			var items []ToolRecord
+			check(bob, "GET", "/api/tools", nil, &items, 200)
+			want := 1
+			if visible {
+				want++
+			}
+			if len(items) != want || !slices.ContainsFunc(items, func(item ToolRecord) bool { return item.ID == own.ID && item.Name == d.Name }) {
+				t.Fatalf("成员的接口库包含意外记录：%+v", items)
+			}
+			for _, item := range items {
+				if item.ID == own.ID {
+					continue
+				}
+				if item.ID != shared.ID || item.Name != publicName || !item.Public || !item.Published || item.URL != "" || item.BodyTemplate != "" || len(item.OutputFields) != 0 || len(item.Parameters) != 1 || item.Parameters[0].Name != "podIp" || item.Parameters[0].Fixed || item.Parameters[0].Value != "" {
+					t.Fatalf("公共接口信息未正确裁剪：%+v", item)
+				}
+			}
+			result, err := bobSession.ListTools(ctx, nil)
+			if err != nil || len(result.Tools) != want || !slices.ContainsFunc(result.Tools, func(tool *mcp.Tool) bool { return tool.Name == d.Name }) || visible != slices.ContainsFunc(result.Tools, func(tool *mcp.Tool) bool { return tool.Name == publicName }) {
+				t.Fatalf("MCP 发现结果不符合共享状态 %t：%+v，%v", visible, result, err)
+			}
+			if !visible {
+				check(bob, "POST", sharedPath+"/call", call, nil, 404)
+				result, err := bobSession.CallTool(ctx, &mcp.CallToolParams{Name: publicName, Arguments: args})
+				if err == nil && (result == nil || !result.IsError) {
+					t.Fatal("不可见的公共工具仍可通过 MCP 调用")
+				}
+			}
+		}
+		checkVisibility(false)
+		check(admin, "POST", sharedPath+"/publish", publish, nil, 200)
+		checkVisibility(true)
+		check(bob, "PUT", sharedPath, mapped, nil, 404)
+		check(bob, "DELETE", sharedPath, nil, nil, 404)
+		check(bob, "POST", sharedPath+"/publish", publish, nil, 404)
+		check(bob, "PATCH", sharedPath+"/visibility", share, nil, 403)
+		for _, format := range []string{"openapi", "higress"} {
+			check(bob, "GET", sharedPath+"/export?format="+format, nil, nil, 404)
+		}
+		check(client(), "POST", sharedPath+"/call", call, nil, 401)
+		var response CallResult
+		check(bob, "POST", sharedPath+"/call", call, &response, 200)
+		if !response.OutputMapped || response.Body != `{"ip":"192.0.2.17","source":"inventory"}` {
+			t.Fatalf("公共试调用绕过输出字段：%+v", response)
+		}
+		for name, expectText := range map[string]string{d.Name: `"podIp":"192.0.2.17"`, publicName: response.Body} {
+			result, err := bobSession.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+			if err != nil || result.IsError || !strings.Contains(result.Content[0].(*mcp.TextContent).Text, expectText) {
+				t.Fatalf("同名工具 %q 调用结果错误：%+v，%v", name, result, err)
+			}
+		}
+		check(admin, "POST", sharedPath+"/publish", map[string]bool{"published": false}, nil, 200)
+		checkVisibility(false)
+		check(admin, "POST", sharedPath+"/publish", publish, nil, 200)
+		checkVisibility(true)
+		check(admin, "PATCH", sharedPath+"/visibility", map[string]bool{"public": false}, nil, 200)
+		checkVisibility(false)
+	})
 	if code := jsonRequest(t, alice, "DELETE", fmt.Sprintf("%s/api/tokens/%d", server.URL, token.ID), nil, nil); code != 200 {
 		t.Fatal(code)
 	}
