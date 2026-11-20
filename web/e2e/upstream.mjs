@@ -1,8 +1,13 @@
 import { createServer } from 'node:http'
 
-const server = createServer((req, res) => {
+const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1:8099')
   res.setHeader('Content-Type', 'application/json; charset=utf-8')
+  if (req.method === 'POST' && url.pathname === '/items') {
+    for await (const chunk of req) res.write(chunk)
+    res.end()
+    return
+  }
   res.end(JSON.stringify({
     podIp: url.searchParams.get('podIp'),
     showAllPods: url.searchParams.get('showAllPods'),

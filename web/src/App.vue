@@ -23,6 +23,7 @@ const filter = ref("all");
 const editor = ref<Definition | null>(null);
 const selectedId = ref<number | null>(null);
 const baseline = ref("");
+const bodyExtractionError = ref("");
 const saving = ref(false);
 const publishing = ref(false);
 const sharing = ref(false);
@@ -236,6 +237,7 @@ function openEditor(definition: Definition, id: number | null = null) {
   editor.value = definitionOf(definition);
   selectedId.value = id;
   baseline.value = JSON.stringify(editor.value);
+  bodyExtractionError.value = "";
   preview.value = "schema";
   exported.value = "";
   error.value = "";
@@ -340,6 +342,60 @@ function extractQuery() {
     );
   } catch (e) {
     error.value = message(e);
+  }
+}
+
+function extractBodyParameters() {
+  const definition = editor.value;
+  if (!definition?.bodyTemplate || definition.wholeBody || !canSendBody.value || published.value) return;
+  bodyExtractionError.value = "";
+  try {
+    let body: unknown;
+    try {
+      body = JSON.parse(definition.bodyTemplate);
+    } catch {
+      throw new Error("请求体模板必须是有效的 JSON 对象");
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body))
+      throw new Error("请求体模板必须是有效的 JSON 对象");
+
+    const existing = new Map(definition.parameters.map((p) => [p.name.toLowerCase(), p]));
+    const added: Parameter[] = [];
+    const pending: unknown[] = [body];
+    while (pending.length) {
+      const value = pending.pop();
+      if (value && typeof value === "object") {
+        pending.push(...Object.values(value).reverse());
+        continue;
+      }
+      if (typeof value !== "string" || !value.startsWith("{{") || !value.endsWith("}}"))
+        continue;
+      const name = value.slice(2, -2);
+      if (!/^[A-Za-z_][A-Za-z0-9_.-]{0,127}$/.test(name))
+        throw new Error(`占位符名称无效：${JSON.stringify(value)}`);
+      const parameter = existing.get(name.toLowerCase());
+      if (parameter) {
+        if (parameter.in !== "body" || parameter.name !== name)
+          throw new Error(`占位符与参数名称冲突：${name}`);
+        continue;
+      }
+      const mapping: Parameter = {
+        name, description: "", in: "body", type: "string", required: true, fixed: false, value: "",
+      };
+      added.push(mapping);
+      existing.set(name.toLowerCase(), mapping);
+    }
+    if (definition.parameters.length + added.length > 100)
+      throw new Error("最多配置 100 个参数，请减少模板占位符或移除不需要的参数");
+    if (!added.length) {
+      notify("模板中没有可新增的占位符");
+      return;
+    }
+    definition.parameters.push(...added);
+    preview.value = "schema";
+    notify(`已生成 ${added.length} 个请求体参数，请在参数表确认类型`);
+  } catch (e) {
+    bodyExtractionError.value = message(e);
   }
 }
 
@@ -1132,7 +1188,7 @@ onUnmounted(() => {
                   </table>
                 </div>
                 <section
-                  v-if="!editor.wholeBody && (bodyParameters.length || editor.bodyTemplate)"
+                  v-if="!editor.wholeBody && ((canSendBody && !published) || bodyParameters.length || editor.bodyTemplate)"
                   class="mapped-body"
                   aria-labelledby="mapped-body-title"
                 >
@@ -1154,7 +1210,16 @@ onUnmounted(() => {
                       class="code-input"
                       aria-describedby="body-template-help"
                       placeholder='{"items":["{{value}}"]}'
+                      @input="bodyExtractionError = ''"
                     />
+                    <button
+                      v-if="canSendBody && !published"
+                      type="button"
+                      class="button small"
+                      :disabled="!editor.bodyTemplate"
+                      @click="extractBodyParameters"
+                    >从占位符生成参数</button>
+                    <div v-if="bodyExtractionError" class="alert error" role="alert">{{ bodyExtractionError }}</div>
                     <p id="body-template-help">
                       将每个请求体参数设为必填或固定值，再用带双引号的占位符引用。替换时保留参数的 JSON 类型。
                     </p>
