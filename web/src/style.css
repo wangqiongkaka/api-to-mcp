@@ -46,7 +46,8 @@ a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
-.body-template summary:focus-visible {
+.body-template summary:focus-visible,
+.output-picker summary:focus-visible {
   outline: 3px solid var(--blue);
   outline-offset: 3px;
 }
@@ -1136,9 +1137,49 @@ tbody tr:last-child td {
   align-items: end;
   gap: 10px;
 }
-.output-picker label {
+.output-picker {
+  align-items: start;
+}
+.output-picker details {
   flex: 1;
   min-width: 0;
+}
+.output-picker summary {
+  padding: 8px 12px;
+  border: 1px solid #d8dfeb;
+  border-radius: 7px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.output-path-list {
+  max-height: 18rem;
+  overflow: auto;
+  margin-top: 4px;
+  padding: 4px;
+  border: 1px solid #d8dfeb;
+  border-radius: 7px;
+}
+.output-path-list label {
+  flex-direction: row;
+  align-items: start;
+  min-height: 34px;
+  padding: 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.output-path-list label:hover {
+  background: #f4f6fa;
+}
+.output-path-list input {
+  flex: none;
+  width: auto;
+  margin: 2px 0 0;
+}
+.output-path-list small {
+  display: block;
+  color: #62718a;
+  font-size: inherit;
 }
 .call-result summary,
 .output-result-heading h3 {
@@ -1556,6 +1597,12 @@ tbody tr:last-child td {
   .form-grid {
     grid-template-columns: minmax(0, 1fr) 100px;
     gap: 12px;
+  }
+  .output-picker {
+    flex-wrap: wrap;
+  }
+  .output-picker details {
+    flex-basis: 100%;
   }
   .output-field {
     grid-template-columns: minmax(0, 1fr) 100px auto;
