@@ -1031,18 +1031,17 @@ tbody tr:last-child td {
   background: #fff;
   tab-size: 2;
 }
-.body-template-tokens {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 4px 8px;
+.body-parameter-example {
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 12px;
 }
-.body-template-tokens code {
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: #edf2fa;
+.body-parameter-example pre {
+  margin-top: 3px;
+  padding: 2px 8px;
+  border-radius: 7px;
+  background: #f6f8fc;
   color: #202d45;
-  overflow-wrap: anywhere;
 }
 .preview-column {
   min-width: 0;

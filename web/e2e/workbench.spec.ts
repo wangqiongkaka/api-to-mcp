@@ -242,17 +242,28 @@ test("请求体配置按需展开并保留已保存的模板", async ({ page }) 
   await expect(wholeBody).toBeDisabled();
   await expect(body).toContainText("默认按参数名称生成 JSON 字段");
   await expect(template).toBeHidden();
+  const firstExample = page.getByRole("row").filter({ has: location }).locator("code");
+  await expect(firstExample).toHaveText('{"itemId": "{{itemId}}"}');
   await method.selectOption("GET");
   await expect(body).toContainText("GET 不支持请求体");
+  await expect(firstExample).toHaveCount(0);
   await method.selectOption("POST");
   await expect(body).not.toContainText("不支持请求体");
 
   await type.selectOption({ label: "整数 · integer" });
   await expect(page.locator(".schema-preview")).toContainText('"type": "integer"');
+  await page.getByRole("button", { name: "添加参数" }).click();
+  await page.getByLabel("参数 2 名称").fill("room");
+  const roomLocation = page.getByLabel("参数 2 位置");
+  const roomExample = page.getByRole("row").filter({ has: roomLocation }).locator("code");
+  await expect(roomExample).toHaveCount(0);
+  await roomLocation.selectOption("body");
+  await expect(roomExample).toHaveText('{"room": "{{room}}"}');
+  await page.getByLabel("参数 2 名称").fill("roomName");
+  await expect(roomExample).toHaveText('{"roomName": "{{roomName}}"}');
   await body.getByText("配置嵌套 JSON 模板", { exact: true }).press("Enter");
   await expect(template).toBeVisible();
-  await expect(body.locator("code")).toHaveText('"{{itemId}}"');
-  const json = '{"items":["{{itemId}}"]}';
+  const json = '{"filter":{"items":["{{itemId}}"],"room":"{{roomName}}"}}';
   await template.fill(json);
   await body.getByText("嵌套 JSON 模板（已填写）", { exact: true }).click();
   await expect(template).toBeHidden();
@@ -265,6 +276,8 @@ test("请求体配置按需展开并保留已保存的模板", async ({ page }) 
   await body.getByText("嵌套 JSON 模板（已填写）", { exact: true }).click();
   await expect(template).toHaveValue(json);
   await expect(type).toHaveValue("integer");
+  await expect(firstExample).toHaveText('{"itemId": "{{itemId}}"}');
+  await expect(roomExample).toHaveText('{"roomName": "{{roomName}}"}');
 
   await page.getByRole("button", { name: "返回接口库" }).click();
   page.once("dialog", (dialog) => dialog.accept());

@@ -49,9 +49,6 @@ const parameterTypes: Record<Parameter["type"], string> = {
 const bodyParameters = computed(() =>
   editor.value?.parameters.filter((p) => p.in === "body") ?? [],
 );
-const bodyTemplateParameters = computed(() =>
-  bodyParameters.value.filter((p) => p.name && (p.fixed || p.required)),
-);
 const canSendBody = computed(
   () => editor.value?.method !== "GET" && editor.value?.method !== "HEAD",
 );
@@ -1036,6 +1033,13 @@ onUnmounted(() => {
                             :aria-label="`参数 ${index + 1} 描述`"
                             placeholder="补充参数用途（选填）"
                           />
+                          <div
+                            v-if="p.in === 'body' && p.name && canSendBody && !editor.wholeBody"
+                            class="body-parameter-example"
+                          >
+                            <span>JSON 模板示例</span>
+                            <pre><code v-text="`{${JSON.stringify(p.name)}: ${JSON.stringify(`{{${p.name}}}`)}}`" /></pre>
+                          </div>
                         </td>
                         <td>
                           <select
@@ -1140,7 +1144,7 @@ onUnmounted(() => {
                   <p v-if="!canSendBody" class="body-method-warning">
                     {{ editor.method }} 不支持请求体。请调整请求方法或参数位置。
                   </p>
-                  <p v-if="editor.bodyTemplate">按下方模板生成上游请求体。</p>
+                  <p v-if="editor.bodyTemplate">上游请求体由下方的同一份模板生成。</p>
                   <p v-else>默认按参数名称生成 JSON 字段。嵌套对象或数组可使用模板。</p>
                   <details v-if="!published || editor.bodyTemplate" class="body-template">
                     <summary>{{ editor.bodyTemplate ? "嵌套 JSON 模板（已填写）" : "配置嵌套 JSON 模板" }}</summary>
@@ -1156,15 +1160,8 @@ onUnmounted(() => {
                       placeholder='{"items":["{{value}}"]}'
                     />
                     <p id="body-template-help">
-                      将每个请求体参数设为必填或固定值，再用带双引号的占位符引用。替换时保留参数的 JSON 类型。
-                    </p>
-                    <p v-if="bodyTemplateParameters.length" class="body-template-tokens">
-                      <span>参数占位符</span>
-                      <code
-                        v-for="(p, index) in bodyTemplateParameters"
-                        :key="index"
-                        v-text="JSON.stringify(`{{${p.name}}}`)"
-                      />
+                      在同一个 JSON 对象中引用每个请求体参数，字段名和层级按上游接口要求填写。
+                      参数须设为必填或固定值，并用带双引号的占位符引用。替换时保留参数的 JSON 类型。
                     </p>
                   </details>
                 </section>
