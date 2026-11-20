@@ -86,13 +86,10 @@ func (a *App) serveMCP(w http.ResponseWriter, r *http.Request) {
 	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "api-to-mcp", Version: "0.1.0"}, nil)
 	for _, record := range tools {
-		if !record.Published {
-			continue
-		}
-		id := record.ID
-		server.AddTool(&mcp.Tool{Name: record.Name, Description: record.Description, InputSchema: record.InputSchema()}, func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			tool, err := a.getTool(ctx, id, User{ID: user.ID, Role: "member"})
-			if err != nil || !tool.Published {
+		id, name := record.ID, record.mcpName(user.ID)
+		server.AddTool(&mcp.Tool{Name: name, Description: record.Description, InputSchema: record.InputSchema()}, func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			tool, err := a.getTool(ctx, id, User{ID: user.ID}, true)
+			if err != nil || !tool.Published || tool.mcpName(user.ID) != name {
 				return toolError("工具不存在或已停用"), nil
 			}
 			args := map[string]any{}

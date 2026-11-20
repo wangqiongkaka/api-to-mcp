@@ -43,8 +43,21 @@ type ToolRecord struct {
 	OwnerID   int64     `json:"ownerId"`
 	OwnerName string    `json:"ownerName"`
 	Published bool      `json:"published"`
+	Public    bool      `json:"public"`
 	UpdatedAt time.Time `json:"updatedAt"`
 	Definition
+}
+
+func (t ToolRecord) manageableBy(user User) bool {
+	return t.OwnerID == user.ID || user.Role == "admin"
+}
+
+func (t ToolRecord) mcpName(userID int64) string {
+	if t.OwnerID == userID {
+		return t.Name
+	}
+	// 接口配置名称不能包含点号，公共名称不会覆盖用户自有工具。
+	return fmt.Sprintf("%s.public.%d", t.Name, t.ID)
 }
 
 type App struct {
@@ -74,6 +87,7 @@ CREATE TABLE IF NOT EXISTS tools (
  published BOOLEAN NOT NULL DEFAULT false, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  UNIQUE(owner_id,name)
 );
+ALTER TABLE tools ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT false;
 CREATE TABLE IF NOT EXISTS access_tokens (
  id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
  name TEXT NOT NULL, token_hash BYTEA UNIQUE NOT NULL, prefix TEXT NOT NULL,
@@ -201,9 +215,11 @@ func (a *App) decrypt(data []byte) (Definition, error) {
 	return d, err
 }
 
-func (a *App) listTools(ctx context.Context, user User, ownOnly bool) ([]ToolRecord, error) {
-	rows, err := a.db.Query(ctx, `SELECT t.id,t.owner_id,u.username,t.published,t.updated_at,t.definition
- FROM tools t JOIN users u ON u.id=t.owner_id WHERE ($1 AND NOT $2) OR t.owner_id=$3 ORDER BY t.updated_at DESC,t.id DESC`, user.Role == "admin", ownOnly, user.ID)
+func (a *App) listTools(ctx context.Context, user User, publishedOnly bool) ([]ToolRecord, error) {
+	rows, err := a.db.Query(ctx, `SELECT t.id,t.owner_id,u.username,t.published,t.is_public,t.updated_at,t.definition
+ FROM tools t JOIN users u ON u.id=t.owner_id
+ WHERE (NOT $2 OR t.published) AND (($1 AND NOT $2) OR t.owner_id=$3 OR (t.is_public AND t.published))
+ ORDER BY t.updated_at DESC,t.id DESC`, user.Role == "admin", publishedOnly, user.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +228,7 @@ func (a *App) listTools(ctx context.Context, user User, ownOnly bool) ([]ToolRec
 	for rows.Next() {
 		var record ToolRecord
 		var data []byte
-		if err := rows.Scan(&record.ID, &record.OwnerID, &record.OwnerName, &record.Published, &record.UpdatedAt, &data); err != nil {
+		if err := rows.Scan(&record.ID, &record.OwnerID, &record.OwnerName, &record.Published, &record.Public, &record.UpdatedAt, &data); err != nil {
 			return nil, err
 		}
 		record.Definition, err = a.decrypt(data)
@@ -224,11 +240,12 @@ func (a *App) listTools(ctx context.Context, user User, ownOnly bool) ([]ToolRec
 	return tools, rows.Err()
 }
 
-func (a *App) getTool(ctx context.Context, id int64, user User) (ToolRecord, error) {
+func (a *App) getTool(ctx context.Context, id int64, user User, allowPublic bool) (ToolRecord, error) {
 	var record ToolRecord
 	var data []byte
-	err := a.db.QueryRow(ctx, `SELECT t.id,t.owner_id,u.username,t.published,t.updated_at,t.definition
- FROM tools t JOIN users u ON u.id=t.owner_id WHERE t.id=$1 AND (t.owner_id=$2 OR $3)`, id, user.ID, user.Role == "admin").Scan(&record.ID, &record.OwnerID, &record.OwnerName, &record.Published, &record.UpdatedAt, &data)
+	err := a.db.QueryRow(ctx, `SELECT t.id,t.owner_id,u.username,t.published,t.is_public,t.updated_at,t.definition
+ FROM tools t JOIN users u ON u.id=t.owner_id WHERE t.id=$1 AND (t.owner_id=$2 OR $3 OR ($4 AND t.is_public AND t.published))`,
+		id, user.ID, user.Role == "admin", allowPublic).Scan(&record.ID, &record.OwnerID, &record.OwnerName, &record.Published, &record.Public, &record.UpdatedAt, &data)
 	if err != nil {
 		return record, err
 	}

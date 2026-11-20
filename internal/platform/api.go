@@ -44,6 +44,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/tools", a.requireUser(a.tools))
 	mux.HandleFunc("PUT /api/tools/{id}", a.requireUser(a.tool))
 	mux.HandleFunc("DELETE /api/tools/{id}", a.requireUser(a.tool))
+	mux.HandleFunc("PATCH /api/tools/{id}/visibility", a.requireUser(a.visibility))
 	mux.HandleFunc("POST /api/tools/{id}/publish", a.requireUser(a.publish))
 	mux.HandleFunc("POST /api/tools/{id}/call", a.requireUser(a.call))
 	mux.HandleFunc("POST /api/output-preview", a.requireUser(outputPreview))
@@ -80,6 +81,20 @@ func (a *App) tools(w http.ResponseWriter, r *http.Request) {
 			fail(w, 500, "加载接口失败")
 			return
 		}
+		for i := range tools {
+			t := &tools[i]
+			if t.manageableBy(u) {
+				continue
+			}
+			visible := Definition{Name: t.mcpName(u.ID), Description: t.Description, Method: t.Method, WholeBody: t.WholeBody, Parameters: []Parameter{}}
+			for _, p := range t.Parameters {
+				if !p.Fixed {
+					p.Value = ""
+					visible.Parameters = append(visible.Parameters, p)
+				}
+			}
+			t.Definition = visible
+		}
 		writeJSON(w, 200, tools)
 		return
 	}
@@ -106,7 +121,7 @@ func (a *App) tools(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	record, err := a.getTool(r.Context(), id, u)
+	record, err := a.getTool(r.Context(), id, u, false)
 	if err != nil {
 		fail(w, 500, "读取新接口失败")
 		return
@@ -114,13 +129,13 @@ func (a *App) tools(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, record)
 }
 
-func (a *App) record(w http.ResponseWriter, r *http.Request) (ToolRecord, bool) {
+func (a *App) record(w http.ResponseWriter, r *http.Request, allowPublic bool) (ToolRecord, bool) {
 	id, err := parseID(r.PathValue("id"))
 	if err != nil {
 		fail(w, 400, err.Error())
 		return ToolRecord{}, false
 	}
-	record, err := a.getTool(r.Context(), id, currentUser(r))
+	record, err := a.getTool(r.Context(), id, currentUser(r), allowPublic)
 	if err != nil {
 		if isNotFound(err) {
 			fail(w, 404, "接口不存在")
@@ -133,7 +148,7 @@ func (a *App) record(w http.ResponseWriter, r *http.Request) (ToolRecord, bool) 
 }
 
 func (a *App) tool(w http.ResponseWriter, r *http.Request) {
-	record, ok := a.record(w, r)
+	record, ok := a.record(w, r, false)
 	if !ok {
 		return
 	}
@@ -175,7 +190,7 @@ func (a *App) tool(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, "接口已被发布或删除，请刷新后重试")
 		return
 	}
-	record, err = a.getTool(r.Context(), record.ID, currentUser(r))
+	record, err = a.getTool(r.Context(), record.ID, currentUser(r), false)
 	if err != nil {
 		fail(w, 500, "读取接口失败")
 		return
@@ -183,8 +198,41 @@ func (a *App) tool(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, record)
 }
 
+func (a *App) visibility(w http.ResponseWriter, r *http.Request) {
+	u := currentUser(r)
+	if u.Role != "admin" {
+		fail(w, 403, "仅管理员可设置公共接口")
+		return
+	}
+	id, err := parseID(r.PathValue("id"))
+	if err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	var input struct {
+		Public *bool `json:"public"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	if input.Public == nil {
+		fail(w, 400, "请选择是否设为公共接口")
+		return
+	}
+	tag, err := a.db.Exec(r.Context(), "UPDATE tools SET is_public=$1,updated_at=now() WHERE id=$2 AND owner_id=$3", *input.Public, id, u.ID)
+	if err != nil {
+		fail(w, 500, "接口共享状态更新失败")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		fail(w, 404, "只能设置自己维护的接口")
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"public": *input.Public})
+}
+
 func (a *App) publish(w http.ResponseWriter, r *http.Request) {
-	record, ok := a.record(w, r)
+	record, ok := a.record(w, r, false)
 	if !ok {
 		return
 	}
@@ -213,7 +261,7 @@ func (a *App) publish(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) call(w http.ResponseWriter, r *http.Request) {
-	record, ok := a.record(w, r)
+	record, ok := a.record(w, r, true)
 	if !ok {
 		return
 	}
@@ -229,7 +277,7 @@ func (a *App) call(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "arguments 必须是 JSON 对象，无参数时传入空对象")
 		return
 	}
-	if input.Raw {
+	if input.Raw && record.manageableBy(currentUser(r)) {
 		record.OutputFields = nil
 	}
 	result, err := a.execute(r.Context(), record.Definition, args)
@@ -266,7 +314,7 @@ func outputPreview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) export(w http.ResponseWriter, r *http.Request) {
-	record, ok := a.record(w, r)
+	record, ok := a.record(w, r, false)
 	if !ok {
 		return
 	}

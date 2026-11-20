@@ -25,6 +25,7 @@ const selectedId = ref<number | null>(null);
 const baseline = ref("");
 const saving = ref(false);
 const publishing = ref(false);
+const sharing = ref(false);
 const calling = ref(false);
 const callArgs = ref("{}");
 const result = ref<CallResult | null>(null);
@@ -65,9 +66,9 @@ const serializedOutputFields = computed(() => JSON.stringify(editor.value?.outpu
 const currentOutput = computed(
   () => outputResult.value?.fields === serializedOutputFields.value ? outputResult.value : null,
 );
-const published = computed(
-  () => tools.value.find((t) => t.id === selectedId.value)?.published ?? false,
-);
+const selectedTool = computed(() => tools.value.find((t) => t.id === selectedId.value));
+const published = computed(() => selectedTool.value?.published ?? false);
+const sharedTool = computed(() => selectedTool.value !== undefined && isShared(selectedTool.value));
 const dirty = computed(
   () =>
     editor.value !== null && JSON.stringify(editor.value) !== baseline.value,
@@ -151,6 +152,10 @@ async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 const message = (e: unknown) =>
   e instanceof Error ? e.message : "请求失败，请稍后重试";
+
+function isShared(tool: Tool) {
+  return tool.public && tool.ownerId !== user.value?.id && user.value?.role !== "admin";
+}
 
 async function refreshTools() {
   tools.value = await api<Tool[]>("/tools");
@@ -400,6 +405,23 @@ async function publish() {
   }
 }
 
+async function toggleSharing(tool: Tool) {
+  sharing.value = true;
+  error.value = "";
+  try {
+    await api(`/tools/${tool.id}/visibility`, {
+      method: "PATCH",
+      body: JSON.stringify({ public: !tool.public }),
+    });
+    await refreshTools();
+    notify(tool.public ? "已取消共享" : "已设为公共接口，发布后所有登录用户可调用");
+  } catch (e) {
+    error.value = message(e);
+  } finally {
+    sharing.value = false;
+  }
+}
+
 async function removeTool(t: Tool) {
   if (!window.confirm(`确定删除 ${t.name}？删除后无法恢复。`)) return;
   try {
@@ -425,8 +447,8 @@ async function runCall() {
     const response = await api<CallResult>(`/tools/${id}/call`, {
       method: "POST",
       body: editor.value?.wholeBody
-        ? `{"arguments":${callArgs.value},"raw":true}`
-        : JSON.stringify({ arguments: args, raw: true }),
+        ? `{"arguments":${callArgs.value},"raw":${!sharedTool.value}}`
+        : JSON.stringify({ arguments: args, raw: !sharedTool.value }),
     });
     if (selectedId.value !== id) return;
     result.value = response;
@@ -802,26 +824,30 @@ onUnmounted(() => {
                   <span :class="['method', t.method.toLowerCase()]">{{
                     t.method
                   }}</span
-                  ><span class="row-url" :title="t.url">{{ t.url }}</span>
+                  ><span v-if="t.url" class="row-url" :title="t.url">{{ t.url }}</span>
                 </td>
                 <td>
                   <span :class="['badge', t.published ? 'success' : 'neutral']"
                     ><i></i>{{ t.published ? "已发布" : "草稿" }}</span
                   >
+                  <span v-if="t.public" class="badge neutral">公共</span>
                 </td>
                 <td v-if="user.role === 'admin'">
                   <span class="owner-name">{{ t.ownerName }}</span>
                 </td>
                 <td class="muted nowrap">{{ date(t.updatedAt) }}</td>
                 <td class="align-right nowrap">
-                  <button class="text-button" @click="openEditor(t, t.id)">
-                    配置</button
-                  ><button
-                    class="text-button danger-text"
-                    @click="removeTool(t)"
-                  >
-                    删除
-                  </button>
+                  <button v-if="isShared(t)" class="text-button" @click="openEditor(t, t.id)">调用</button>
+                  <template v-else>
+                    <button class="text-button" @click="openEditor(t, t.id)">配置</button>
+                    <button
+                      v-if="user.role === 'admin' && t.ownerId === user.id"
+                      class="text-button"
+                      :disabled="sharing"
+                      @click="toggleSharing(t)"
+                    >{{ t.public ? "取消共享" : "设为公共" }}</button>
+                    <button class="text-button danger-text" @click="removeTool(t)">删除</button>
+                  </template>
                 </td>
               </tr>
               <tr v-if="visibleTools.length === 0">
@@ -850,10 +876,11 @@ onUnmounted(() => {
               }}<span :class="['badge', published ? 'success' : 'neutral']">{{
                 published ? "已发布" : "草稿"
               }}</span>
+              <span v-if="selectedTool?.public" class="badge neutral">公共</span>
             </h1>
-            <p>定义请求、核对参数，再把接口发布为 MCP 工具。</p>
+            <p>{{ sharedTool ? editor.description : "定义请求、核对参数，再把接口发布为 MCP 工具。" }}</p>
           </div>
-          <div class="button-row">
+          <div v-if="!sharedTool" class="button-row">
             <button
               class="button"
               :disabled="selectedId === null || dirty || publishing"
@@ -871,12 +898,12 @@ onUnmounted(() => {
             </button>
           </div>
         </header>
-        <div v-if="published" class="alert info">
+        <div v-if="published && !sharedTool" class="alert info">
           此接口已发布。需要修改时，请先停用工具，再保存并重新发布。
         </div>
         <div class="editor-grid">
           <div class="editor-main">
-            <form id="tool-form" class="panel" @submit.prevent="save">
+            <form v-if="!sharedTool" id="tool-form" class="panel" @submit.prevent="save">
               <fieldset :disabled="published || saving">
                 <div class="panel-heading">
                   <div>
@@ -1271,7 +1298,7 @@ onUnmounted(() => {
                     ><span>{{ result.contentType || "无内容类型" }}</span>
                   </div>
                   <details open>
-                    <summary>原始响应</summary>
+                    <summary>{{ sharedTool ? "调用结果" : "原始响应" }}</summary>
                     <pre>{{ formattedBody(result.body) }}</pre>
                   </details>
                   <section v-if="successfulResponse && editor.outputFields?.length" class="custom-output" aria-labelledby="custom-output-title">
@@ -1297,7 +1324,7 @@ onUnmounted(() => {
                   <p>核对客户端可见的参数结构。</p>
                 </div>
               </div>
-              <div class="preview-tabs">
+              <div v-if="!sharedTool" class="preview-tabs">
                 <button
                   :class="{ selected: preview === 'schema' }"
                   @click="loadExport('schema')"
@@ -1320,7 +1347,7 @@ onUnmounted(() => {
               <pre class="schema-preview">{{
                 previewText || "正在生成配置…"
               }}</pre>
-              <div class="preview-footer">
+              <div v-if="!sharedTool" class="preview-footer">
                 <span
                   >{{
                     editor.parameters.filter((p) => !p.fixed).length
@@ -1335,7 +1362,7 @@ onUnmounted(() => {
                 </button>
               </div>
             </section>
-            <div class="editor-tip">
+            <div v-if="!sharedTool" class="editor-tip">
               <strong>让 AI 知道怎么用</strong>
               <p>
                 描述里写清操作对象与用途，参数描述里给出示例。发布后，客户端就能发现这项工具。
@@ -1350,7 +1377,7 @@ onUnmounted(() => {
           <div>
             <div class="breadcrumb">工作空间 / 客户端连接</div>
             <h1>连接与令牌</h1>
-            <p>用个人令牌连接 MCP，仅能调用你自己已发布的工具。</p>
+            <p>用个人令牌连接 MCP，调用已发布的自有工具和公共工具。</p>
           </div>
         </header>
         <section class="panel connection-panel">

@@ -40,6 +40,7 @@ export interface Tool extends Definition {
   ownerId: number;
   ownerName: string;
   published: boolean;
+  public: boolean;
   updatedAt: string;
 }
 
