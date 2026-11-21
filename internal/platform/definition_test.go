@@ -41,6 +41,59 @@ func TestBuildRequest(t *testing.T) {
 	}
 }
 
+func TestBuildRequestRequiresQueryFilter(t *testing.T) {
+	d := sampleDefinition()
+	d.Method = "POST"
+	d.Parameters = []Parameter{
+		{Name: "host_ip", In: "body", Type: "array", QueryFilter: true},
+		{Name: "admin", In: "body", Type: "array", QueryFilter: true, ItemArrayField: "value"},
+		{Name: "limit", In: "query", Type: "integer"},
+		{Name: "auth", In: "header", Type: "string", Fixed: true, Value: "secret"},
+		{Name: "active", In: "query", Type: "boolean", QueryFilter: true},
+	}
+	d.BodyTemplate = `{"filters":[{"ip":"{{host_ip}}"},{"byAdmin":"{{admin}}"}]}`
+	const message = "请至少填写一个筛选参数：host_ip、admin、active"
+	for _, tc := range []struct {
+		args string
+		pass bool
+	}{
+		{`{}`, false},
+		{`{"limit":1}`, false},
+		{`{"host_ip":[],"limit":1}`, false},
+		{`{"host_ip":[null," ",[]]}`, false},
+		{`{"admin":[{"field":"name","value":[" "]}]}`, false},
+		{`{"host_ip":["192.0.2.1"]}`, true},
+		{`{"host_ip":[],"admin":[{"value":["owner"]}]}`, true},
+		{`{"host_ip":["192.0.2.1"],"admin":[{"value":["owner"]}]}`, true},
+		{`{"active":false}`, true},
+	} {
+		args, err := d.decodeArguments([]byte(tc.args))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r, err := d.BuildRequest(args); tc.pass {
+			if err != nil {
+				t.Errorf("调用 %s 失败：%v", tc.args, err)
+			} else {
+				r.Body.Close()
+			}
+		} else if err == nil || err.Error() != message || r != nil {
+			t.Errorf("调用 %s 应在构造请求前拒绝：请求 %v，错误 %v", tc.args, r, err)
+		}
+	}
+	if schema := d.InputSchema(); schema["description"] != message || len(schema["required"].([]string)) != 0 {
+		t.Fatalf("筛选参数输入说明错误：%v", schema)
+	}
+	d.BodyTemplate = `{"filters":[{"ip":"{{host_ip}}","byAdmin":"{{admin}}"}]}`
+	if _, err := d.BuildRequest(map[string]any{"host_ip": []any{"192.0.2.1"}}); err == nil || err.Error() != message {
+		t.Fatalf("被模板省略的筛选条件应拒绝：%v", err)
+	}
+	d.Parameters[3].QueryFilter = true
+	if err := d.Validate(); err == nil || !strings.Contains(err.Error(), "仅客户端填写的参数可设为筛选参数") {
+		t.Fatalf("固定参数不可设为筛选参数：%v", err)
+	}
+}
+
 func TestPathHeaderAndBody(t *testing.T) {
 	d := Definition{Name: "updateUser", Description: "更新用户", Method: "PATCH", URL: "https://example.com/users/{id}", TimeoutSeconds: 5, Parameters: []Parameter{
 		{Name: "id", In: "path", Type: "string", Required: true},

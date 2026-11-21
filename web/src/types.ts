@@ -11,6 +11,7 @@ export interface Parameter {
   in: "query" | "path" | "header" | "body";
   type: "string" | "boolean" | "integer" | "number" | "object" | "array";
   required: boolean;
+  queryFilter?: boolean;
   nonEmpty?: boolean;
   itemArrayField?: string;
   fixed: boolean;

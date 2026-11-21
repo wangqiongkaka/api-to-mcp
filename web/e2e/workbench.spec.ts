@@ -329,3 +329,68 @@ test("从嵌套请求体模板生成参数并试调用", async ({ page }) => {
   await expect(page.locator(".call-result pre")).toContainText('"192.0.2.1"');
   await expect(page.locator(".call-result pre")).toContainText('"roomName": "test-room"');
 });
+
+test("至少填写一个指定筛选参数才能试调用", async ({ page }, testInfo) => {
+  await page.goto("/");
+  await registerMember(page);
+  const created = await page.request.post("/api/tools", {
+    data: {
+      name: "searchByFilter",
+      description: "按主机 IP 或负责人查询",
+      url: "http://127.0.0.1:8099/items",
+      method: "POST",
+      timeoutSeconds: 5,
+      bodyTemplate: '{"queryParams":[{"ip":"{{host_ip}}"},{"owner":"{{admin}}"}]}',
+      parameters: [
+        { name: "host_ip", in: "body", type: "array" },
+        { name: "admin", in: "body", type: "array" },
+        { name: "limit", in: "query", type: "integer" },
+      ],
+    },
+  });
+  expect(created.status()).toBe(201);
+  await page.reload();
+  await page.getByRole("button", { name: "配置", exact: true }).click();
+  const ip = page.getByLabel("参数 1 筛选参数");
+  const admin = page.getByLabel("参数 2 筛选参数");
+  await expect(ip).not.toBeChecked();
+  await ip.check();
+  await admin.check();
+  await page.getByLabel("参数 2 映射方式").selectOption({ label: "固定值" });
+  await expect(admin).toHaveCount(0);
+  await page.getByLabel("参数 2 映射方式").selectOption({ label: "客户端填写" });
+  await expect(admin).not.toBeChecked();
+  await admin.check();
+  const message = "请至少填写一个筛选参数：host_ip、admin";
+  await expect(page.locator(".schema-preview")).toContainText(message);
+  await page.getByRole("button", { name: "保存草稿" }).click();
+  await expect(page.getByText("接口配置已保存")).toBeVisible();
+  await page.getByRole("button", { name: "返回接口库" }).click();
+  await page.getByRole("button", { name: "配置", exact: true }).click();
+  await expect(ip).toBeChecked();
+  await expect(admin).toBeChecked();
+  const args = page.getByLabel("调用参数（JSON）");
+  const run = page.getByRole("button", { name: "运行测试" });
+  const emptyFilter = '{"host_ip":[],"limit":10}';
+  await args.fill(emptyFilter);
+  await run.click();
+  await expect(page.getByRole("alert")).toHaveText(message);
+  await expect(args).toHaveValue(emptyFilter);
+  await expect(page.locator(".toast")).toHaveCount(0);
+  await page.getByRole("heading", { name: /^参数映射/ }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath("query-filter-desktop.png") });
+
+  await args.fill('{"admin":["owner"]}');
+  await run.click();
+  await expect(page.getByText("HTTP 200", { exact: true })).toBeVisible();
+  await expect(page.locator(".call-result pre")).toContainText('"owner"');
+  await expect(page.locator(".call-result pre")).not.toContainText('"ip"');
+  await page.setViewportSize({ width: 393, height: 852 });
+  const mappings = page.locator(".parameter-wrap");
+  await mappings.scrollIntoViewIfNeeded();
+  await mappings.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
+  await expect(ip).toBeInViewport();
+  await expect(admin).toBeInViewport();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("query-filter-mobile.png") });
+});

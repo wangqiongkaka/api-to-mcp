@@ -90,6 +90,7 @@ const publishedCount = computed(
 const schema = computed(() => {
   const properties: Record<string, unknown> = Object.create(null);
   const required: string[] = [];
+  const filters: string[] = [];
   if (editor.value?.wholeBody) {
     properties.body = { description: "完整的 JSON 请求体，省略时不发送请求体" };
   }
@@ -114,8 +115,12 @@ const schema = computed(() => {
         : {}),
     };
     if (p.required) required.push(p.name);
+    if (p.queryFilter) filters.push(p.name);
   }
-  return { type: "object", properties, required, additionalProperties: false };
+  return {
+    type: "object", properties, required, additionalProperties: false,
+    ...(filters.length ? { description: `请至少填写一个筛选参数：${filters.join("、")}` } : {}),
+  };
 });
 const previewText = computed(() =>
   preview.value === "schema"
@@ -1054,6 +1059,9 @@ onUnmounted(() => {
                       <span class="muted">{{ editor.parameters.length }}</span>
                     </h2>
                     <p>固定值由服务端填入，不会出现在客户端输入中。</p>
+                    <p v-if="editor.parameters.some((p) => !p.fixed)">
+                      勾选筛选参数后，调用时至少要填其中一项。
+                    </p>
                   </div>
                   <button
                     type="button"
@@ -1123,7 +1131,7 @@ onUnmounted(() => {
                             v-if="p.type === 'array' && !p.fixed"
                             class="array-options"
                           >
-                            <label class="array-constraint">
+                            <label class="parameter-constraint">
                               <input
                                 v-model="p.nonEmpty"
                                 type="checkbox"
@@ -1151,7 +1159,7 @@ onUnmounted(() => {
                           <select
                             v-model="p.fixed"
                             :aria-label="`参数 ${index + 1} 映射方式`"
-                            @change="if (p.fixed) { p.nonEmpty = false; p.itemArrayField = ''; }"
+                            @change="if (p.fixed) { p.queryFilter = false; p.nonEmpty = false; p.itemArrayField = ''; }"
                           >
                             <option :value="false">客户端填写</option>
                             <option :value="true">固定值</option></select
@@ -1164,6 +1172,14 @@ onUnmounted(() => {
                             placeholder="输入固定值"
                             autocomplete="off"
                           />
+                          <label v-else class="parameter-constraint query-filter">
+                            <input
+                              v-model="p.queryFilter"
+                              type="checkbox"
+                              :aria-label="`参数 ${index + 1} 筛选参数`"
+                            />
+                            筛选参数
+                          </label>
                         </td>
                         <td class="checkbox-cell">
                           <input

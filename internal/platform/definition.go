@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -18,6 +19,7 @@ type Parameter struct {
 	In             string `json:"in"`
 	Type           string `json:"type"`
 	Required       bool   `json:"required"`
+	QueryFilter    bool   `json:"queryFilter,omitempty"`
 	NonEmpty       bool   `json:"nonEmpty,omitempty"`
 	ItemArrayField string `json:"itemArrayField,omitempty"`
 	Fixed          bool   `json:"fixed"`
@@ -90,6 +92,9 @@ func (d Definition) Validate() error {
 		if p.NonEmpty && (p.Type != "array" || p.Fixed) {
 			return fmt.Errorf("仅客户端填写的数组参数可设置至少一项：%s", p.Name)
 		}
+		if p.QueryFilter && p.Fixed {
+			return fmt.Errorf("仅客户端填写的参数可设为筛选参数：%s", p.Name)
+		}
 		if p.ItemArrayField != "" && (p.Type != "array" || p.Fixed || !parameterName.MatchString(p.ItemArrayField)) {
 			return fmt.Errorf("元素内非空数组字段无效：%s", p.Name)
 		}
@@ -147,7 +152,7 @@ func (d Definition) Validate() error {
 		if len(templateParams) == 0 {
 			return fmt.Errorf("请为请求体模板配置请求体参数")
 		}
-		if _, err := renderBodyTemplate(d.BodyTemplate, templateParams); err != nil {
+		if _, _, err := renderBodyTemplate(d.BodyTemplate, templateParams); err != nil {
 			return err
 		}
 	}
@@ -240,7 +245,51 @@ func (d Definition) InputSchema() map[string]any {
 			required = append(required, p.Name)
 		}
 	}
-	return map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}
+	schema := map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}
+	if filters := d.queryFilterNames(); len(filters) > 0 {
+		schema["description"] = queryFilterMessage(filters)
+	}
+	return schema
+}
+
+func (d Definition) queryFilterNames() []string {
+	var names []string
+	for _, p := range d.Parameters {
+		if p.QueryFilter {
+			names = append(names, p.Name)
+		}
+	}
+	return names
+}
+
+func queryFilterMessage(names []string) string {
+	return "请至少填写一个筛选参数：" + strings.Join(names, "、")
+}
+
+func hasQueryFilterValue(value any, itemArrayField string) bool {
+	switch value := value.(type) {
+	case string:
+		return strings.TrimSpace(value) != ""
+	case []any:
+		for _, item := range value {
+			if itemArrayField != "" {
+				object, _ := item.(map[string]any)
+				item = object[itemArrayField]
+			}
+			if hasQueryFilterValue(item, "") {
+				return true
+			}
+		}
+	case map[string]any:
+		for _, item := range value {
+			if hasQueryFilterValue(item, "") {
+				return true
+			}
+		}
+	default:
+		return value != nil
+	}
+	return false
 }
 
 func (d Definition) decodeArguments(data []byte) (map[string]any, error) {
@@ -346,6 +395,7 @@ func (d Definition) BuildRequest(args map[string]any) (*http.Request, error) {
 	}
 	u.RawQuery = q.Encode()
 	var data []byte
+	var renderedParameters []string
 	if value, exists := args["body"]; d.WholeBody && exists {
 		if raw, ok := value.(json.RawMessage); ok && json.Valid(raw) {
 			data = raw
@@ -358,12 +408,19 @@ func (d Definition) BuildRequest(args map[string]any) (*http.Request, error) {
 		}
 	} else if d.BodyTemplate != "" {
 		var err error
-		data, err = renderBodyTemplate(d.BodyTemplate, body)
+		data, renderedParameters, err = renderBodyTemplate(d.BodyTemplate, body)
 		if err != nil {
 			return nil, err
 		}
 	} else if len(body) > 0 {
 		data, _ = json.Marshal(body)
+	}
+	if filters := d.queryFilterNames(); len(filters) > 0 && !slices.ContainsFunc(filters, func(name string) bool {
+		p := dynamic[name]
+		return (d.BodyTemplate == "" || p.In != "body" || slices.Contains(renderedParameters, name)) &&
+			hasQueryFilterValue(args[name], p.ItemArrayField)
+	}) {
+		return nil, fmt.Errorf("%s", queryFilterMessage(filters))
 	}
 	if len(data) > 0 {
 		headers.Set("Content-Type", "application/json")

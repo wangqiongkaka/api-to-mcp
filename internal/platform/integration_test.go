@@ -14,6 +14,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -86,7 +87,11 @@ func TestPlatformIntegration(t *testing.T) {
 	query := u.Query()
 	query.Set("search_path", namespace)
 	u.RawQuery = query.Encode()
+	var guardedCalls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/guarded" {
+			guardedCalls.Add(1)
+		}
 		if r.Header.Get("X-API-Key") != "private-upstream-secret" {
 			http.Error(w, "missing secret", 401)
 			return
@@ -428,6 +433,40 @@ func TestPlatformIntegration(t *testing.T) {
 		checkVisibility(true)
 		check(admin, "PATCH", sharedPath+"/visibility", map[string]bool{"public": false}, nil, 200)
 		checkVisibility(false)
+	})
+	t.Run("试调用和 MCP 都在转发前检查筛选参数", func(t *testing.T) {
+		guarded := d
+		guarded.Name, guarded.Method, guarded.URL = "guardedQuery", "POST", upstream.URL+"/guarded"
+		guarded.BodyTemplate = `{"queryParams":[{"ip":"{{host_ip}}"},{"owner":"{{admin}}"}]}`
+		guarded.Parameters = []Parameter{
+			{Name: "host_ip", In: "body", Type: "array", QueryFilter: true},
+			{Name: "admin", In: "body", Type: "array", QueryFilter: true},
+			{Name: "limit", In: "query", Type: "integer"},
+			d.Parameters[len(d.Parameters)-1],
+		}
+		var record ToolRecord
+		if code := jsonRequest(t, alice, "POST", server.URL+"/api/tools", guarded, &record); code != 201 {
+			t.Fatal(code)
+		}
+		path := fmt.Sprintf("%s/api/tools/%d", server.URL, record.ID)
+		if code := jsonRequest(t, alice, "POST", path+"/publish", map[string]bool{"published": true}, nil); code != 200 {
+			t.Fatal(code)
+		}
+		const message = "请至少填写一个筛选参数：host_ip、admin"
+		args := map[string]any{"limit": 1, "host_ip": []any{}}
+		var rejection struct{ Error string }
+		if code := jsonRequest(t, alice, "POST", path+"/call", map[string]any{"arguments": args, "raw": true}, &rejection); code != 400 || rejection.Error != message {
+			t.Fatalf("试调用筛选错误：%d，%+v", code, rejection)
+		}
+		result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: guarded.Name, Arguments: args})
+		if err != nil || !result.IsError || result.Content[0].(*mcp.TextContent).Text != message || guardedCalls.Load() != 0 {
+			t.Fatalf("MCP 筛选错误：%+v，%v，上游收到 %d 次调用", result, err, guardedCalls.Load())
+		}
+		args = map[string]any{"admin": []any{"owner"}}
+		result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: guarded.Name, Arguments: args})
+		if err != nil || result.IsError || guardedCalls.Load() != 1 {
+			t.Fatalf("有效筛选未转发：%+v，%v，上游收到 %d 次调用", result, err, guardedCalls.Load())
+		}
 	})
 	if code := jsonRequest(t, alice, "DELETE", fmt.Sprintf("%s/api/tokens/%d", server.URL, token.ID), nil, nil); code != 200 {
 		t.Fatal(code)

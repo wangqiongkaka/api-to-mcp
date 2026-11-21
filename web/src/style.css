@@ -956,16 +956,20 @@ tbody tr:last-child td {
   border-radius: 7px;
   background: #f6f8fc;
 }
-.array-constraint {
+.parameter-constraint {
   flex-direction: row;
   align-items: center;
   gap: 6px;
   min-height: 26px;
   font-size: 12px;
 }
-.array-constraint input {
+.parameter-constraint input {
   flex: none;
   margin: 0;
+}
+.query-filter {
+  margin-top: 7px;
+  white-space: nowrap;
 }
 .array-item-field {
   gap: 4px;

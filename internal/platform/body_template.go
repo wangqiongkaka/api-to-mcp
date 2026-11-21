@@ -8,18 +8,19 @@ import (
 
 type omittedTemplateArray struct{}
 
-func renderBodyTemplate(source string, values map[string]any) ([]byte, error) {
+func renderBodyTemplate(source string, values map[string]any) ([]byte, []string, error) {
 	if !json.Valid([]byte(source)) {
-		return nil, fmt.Errorf("请求体模板必须是有效的 JSON 对象")
+		return nil, nil, fmt.Errorf("请求体模板必须是有效的 JSON 对象")
 	}
 	decoder := json.NewDecoder(strings.NewReader(source))
 	decoder.UseNumber()
 	var root map[string]any
 	if err := decoder.Decode(&root); err != nil || root == nil {
-		return nil, fmt.Errorf("请求体模板必须是有效的 JSON 对象")
+		return nil, nil, fmt.Errorf("请求体模板必须是有效的 JSON 对象")
 	}
 
 	used := map[string]bool{}
+	var rendered []string
 	var replace func(any) (any, bool, error)
 	replace = func(node any) (any, bool, error) {
 		hasOmission := false
@@ -40,6 +41,7 @@ func renderBodyTemplate(source string, values map[string]any) ([]byte, error) {
 		case []any:
 			items := node[:0]
 			for _, value := range node {
+				start := len(rendered)
 				nested, omitted, err := replace(value)
 				if err != nil {
 					return nil, false, err
@@ -47,6 +49,7 @@ func renderBodyTemplate(source string, values map[string]any) ([]byte, error) {
 				if omitted {
 					// 移除整条条件后，省略状态不再影响外层记录。
 					if _, condition := nested.(map[string]any); condition {
+						rendered = rendered[:start]
 						continue
 					}
 					hasOmission = true
@@ -66,18 +69,22 @@ func renderBodyTemplate(source string, values map[string]any) ([]byte, error) {
 				}
 				used[name] = true
 				_, omitted := value.(omittedTemplateArray)
+				if !omitted {
+					rendered = append(rendered, name)
+				}
 				return value, omitted, nil
 			}
 		}
 		return node, hasOmission, nil
 	}
 	if _, _, err := replace(root); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for name := range values {
 		if !used[name] {
-			return nil, fmt.Errorf("请求体模板缺少参数占位符：%s", name)
+			return nil, nil, fmt.Errorf("请求体模板缺少参数占位符：%s", name)
 		}
 	}
-	return json.Marshal(root)
+	data, err := json.Marshal(root)
+	return data, rendered, err
 }
