@@ -47,6 +47,8 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 .body-template summary:focus-visible,
+.array-options summary:focus-visible,
+.call-panel:focus-visible,
 .output-picker summary:focus-visible {
   outline: 3px solid var(--blue);
   outline-offset: 3px;
@@ -304,11 +306,6 @@ fieldset:disabled textarea {
   background: #fff2f3;
   border: 1px solid #f1d3d9;
   color: #a82c42;
-}
-.alert.info {
-  background: #edf3ff;
-  border: 1px solid #d9e4fc;
-  color: #315a9b;
 }
 .main-alert {
   display: flex;
@@ -765,14 +762,35 @@ tbody tr:last-child td {
   padding: 0;
   color: #7b879a;
   font-size: 12px;
-  margin-bottom: 12px;
 }
 .back-button:hover {
   color: var(--blue);
 }
+.editor-header {
+  padding-block: 12px;
+  margin-bottom: 16px;
+}
+.editor-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  border-bottom: 1px solid var(--border);
+  background: #f4f6fa;
+}
+.editor-header > div:first-child {
+  min-width: 0;
+  max-width: 100%;
+}
 .editor-header h1 {
   font-size: 25px;
-  overflow-wrap: anywhere;
+}
+.editor-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editor-header .button-row {
+  flex: none;
 }
 .editor-grid {
   display: grid;
@@ -809,13 +827,6 @@ tbody tr:last-child td {
   width: 15px;
   margin: 0;
   min-height: 0;
-}
-.step-label {
-  border: 1px solid #dce4ef;
-  border-radius: 5px;
-  color: #7d8ba1;
-  padding: 2px 8px;
-  font-size: 10px;
 }
 .request-input {
   display: flex;
@@ -862,11 +873,6 @@ tbody tr:last-child td {
 }
 .parameter-heading h2 {
   font-size: 15px;
-}
-.parameter-heading h2 span {
-  margin-left: 6px;
-  font-size: 11px;
-  font-weight: 400;
 }
 .output-field {
   display: grid;
@@ -949,12 +955,22 @@ tbody tr:last-child td {
   padding-top: 22px;
 }
 .array-options {
-  display: grid;
-  gap: 8px;
   margin-top: 7px;
+}
+.array-options summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--blue);
+  padding-block: 4px;
+  font-size: 12px;
+}
+.array-options[open] {
   padding: 7px 8px 8px;
   border-radius: 7px;
   background: #f6f8fc;
+}
+.array-options[open] > label {
+  margin-top: 6px;
 }
 .parameter-constraint {
   flex-direction: row;
@@ -1086,32 +1102,17 @@ tbody tr:last-child td {
 .preview-footer {
   padding: 0 18px 16px;
   font-size: 10px;
-  color: #8190a3;
+  color: var(--muted);
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
+  gap: 12px;
 }
 .preview-footer .text-button {
   font-size: 11px;
 }
-.editor-tip {
-  padding: 22px 14px;
-  color: #7a889e;
-  font-size: 11px;
-  line-height: 1.9;
-}
-.editor-tip strong {
-  color: #516886;
-  font-weight: 550;
-}
-.editor-tip p {
-  margin-top: 8px;
-}
-.call-panel .panel-heading {
-  align-items: flex-start;
-}
-.call-panel .panel-heading p {
-  max-width: 420px;
+.call-panel {
+  scroll-margin-top: 96px;
 }
 .code-input {
   font-size: 12px;
@@ -1201,10 +1202,6 @@ tbody tr:last-child td {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 8px;
-}
-.custom-output p {
-  color: #62718a;
-  font-size: 12px;
 }
 .connection-panel,
 .token-panel {
@@ -1436,11 +1433,6 @@ tbody tr:last-child td {
   .editor-grid {
     grid-template-columns: minmax(0, 1fr);
   }
-  .preview-column {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 230px;
-    gap: 18px;
-  }
   .schema-preview {
     max-height: 300px;
   }
@@ -1575,13 +1567,17 @@ tbody tr:last-child td {
   }
   .editor-header {
     flex-direction: column;
+    gap: 8px;
   }
   .editor-header > .button-row {
     width: 100%;
-    justify-content: flex-end;
+    justify-content: flex-start;
   }
   .editor-header h1 {
     font-size: 24px;
+  }
+  .call-panel {
+    scroll-margin-top: 128px;
   }
   .editor-grid {
     gap: 18px;
@@ -1619,15 +1615,6 @@ tbody tr:last-child td {
     flex-direction: column;
     align-items: flex-start;
     gap: 3px;
-  }
-  .preview-column {
-    display: block;
-  }
-  .editor-tip {
-    padding-bottom: 0;
-  }
-  .call-panel .panel-heading p {
-    max-width: 210px;
   }
   .endpoint-row {
     margin: 0 16px;

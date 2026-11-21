@@ -30,10 +30,12 @@ test("注册、配置、试调用、发布、导出和令牌管理", async ({ pa
   await page
     .getByLabel("接口地址", { exact: true })
     .fill("http://127.0.0.1:8099/ws/aquaman/kubernetes/pods/getPodInstance");
-  await expect(page.getByRole("button", { name: "运行测试" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "发送请求" })).toBeDisabled();
   await page.getByRole("button", { name: "保存草稿" }).click();
-  await expect(page.getByRole("button", { name: "运行测试" })).toBeEnabled();
-  await page.getByRole("button", { name: "运行测试" }).click();
+  await expect(page.getByRole("button", { name: "发送请求" })).toBeEnabled();
+  await page.getByRole("button", { name: "试调用", exact: true }).click();
+  await expect(page.getByRole("region", { name: "试调用" })).toBeFocused();
+  await page.getByRole("button", { name: "发送请求" }).click();
   await expect(page.getByText("HTTP 200", { exact: true })).toBeVisible();
   await expect(page.locator(".call-result pre")).toContainText(
     '"showAllPods": "false"',
@@ -104,7 +106,7 @@ test("注册、配置、试调用、发布、导出和令牌管理", async ({ pa
   await page.getByLabel("参数 2 固定值").fill("10.60.144.184");
   await page.getByRole("button", { name: "保存草稿" }).click();
   const call = page.waitForResponse((response) => response.url().endsWith("/call"));
-  await page.getByRole("button", { name: "运行测试" }).click();
+  await page.getByRole("button", { name: "发送请求" }).click();
   const response = await call;
   expect(response.ok(), await response.text()).toBe(true);
   expect(JSON.parse(await callArgs.inputValue())).toEqual({ showAllPods: true });
@@ -132,7 +134,7 @@ test("从原始试调用响应多选字段并预览自定义输出", async ({ pa
   await page.getByLabel("接口地址", { exact: true }).fill("http://127.0.0.1:8099/pods");
   const output = page.getByRole("region", { name: "输出字段" });
   const add = output.getByRole("button", { name: "添加输出字段" });
-  const trial = page.getByRole("button", { name: "运行测试" });
+  const trial = page.getByRole("button", { name: "发送请求" });
   let calls = 0;
   page.on("request", (request) => {
     if (new URL(request.url()).pathname.endsWith("/call")) calls++;
@@ -209,8 +211,8 @@ test("从原始试调用响应多选字段并预览自定义输出", async ({ pa
   await output.getByRole("button", { name: "删除输出字段 2" }).click();
   await output.getByRole("button", { name: "删除输出字段 1" }).click();
   await page.getByRole("button", { name: "保存草稿" }).click();
-  await expect(page.getByRole("button", { name: "运行测试" })).toBeEnabled();
-  await page.getByRole("button", { name: "运行测试" }).click();
+  await expect(page.getByRole("button", { name: "发送请求" })).toBeEnabled();
+  await page.getByRole("button", { name: "发送请求" }).click();
   await expect(page.locator(".call-result pre")).toContainText('"showAllPods": "false"');
   await page.getByRole("button", { name: "返回接口库" }).click();
   page.once("dialog", (dialog) => dialog.accept());
@@ -241,7 +243,6 @@ test("请求体配置按需展开并保留已保存的模板", async ({ page }) 
   await wholeBody.uncheck();
   await location.selectOption("body");
   await expect(wholeBody).toBeDisabled();
-  await expect(body).toContainText("默认按参数名称生成 JSON 字段");
   await expect(template).toBeHidden();
   await method.selectOption("GET");
   await expect(body).toContainText("GET 不支持请求体");
@@ -250,6 +251,14 @@ test("请求体配置按需展开并保留已保存的模板", async ({ page }) 
 
   await type.selectOption({ label: "整数 · integer" });
   await expect(page.locator(".schema-preview")).toContainText('"type": "integer"');
+  const save = page.getByRole("button", { name: "保存草稿" });
+  const send = page.getByRole("button", { name: "发送请求" });
+  await save.click();
+  await expect(send).toBeEnabled();
+  await page.getByLabel("调用参数（JSON）").fill('{"itemId":42}');
+  await send.click();
+  await expect(page.locator(".call-result pre")).toContainText('"itemId": 42');
+
   await body.getByText("配置嵌套 JSON 模板", { exact: true }).press("Enter");
   await expect(template).toBeVisible();
   await expect(body.locator("code")).toHaveText('"{{itemId}}"');
@@ -258,8 +267,8 @@ test("请求体配置按需展开并保留已保存的模板", async ({ page }) 
   await body.getByText("嵌套 JSON 模板（已填写）", { exact: true }).click();
   await expect(template).toBeHidden();
 
-  await page.getByRole("button", { name: "保存草稿" }).click();
-  await expect(page.getByText("接口配置已保存")).toBeVisible();
+  await save.click();
+  await expect(send).toBeEnabled();
   await page.getByRole("button", { name: "返回接口库" }).click();
   await page.getByRole("button", { name: "配置", exact: true }).click();
   await expect(template).toBeHidden();
@@ -323,7 +332,7 @@ test("从嵌套请求体模板生成参数并试调用", async ({ page }) => {
   await expect(template).toHaveValue(json);
 
   await page.getByLabel("调用参数（JSON）").fill('{"hostIps":["192.0.2.1"],"room":"test-room"}');
-  await page.getByRole("button", { name: "运行测试" }).click();
+  await page.getByRole("button", { name: "发送请求" }).click();
   await expect(page.getByText("HTTP 200", { exact: true })).toBeVisible();
   await expect(page.locator(".call-result pre")).toContainText('"ipAddresses": [');
   await expect(page.locator(".call-result pre")).toContainText('"192.0.2.1"');
@@ -353,6 +362,15 @@ test("至少填写一个指定筛选参数才能试调用", async ({ page }, tes
   await page.getByRole("button", { name: "配置", exact: true }).click();
   const ip = page.getByLabel("参数 1 筛选参数");
   const admin = page.getByLabel("参数 2 筛选参数");
+  const arrayOptions = page.locator(".array-options summary").first();
+  const nonEmpty = page.getByLabel("参数 1 数组不为空");
+  await expect(nonEmpty).toBeHidden();
+  await arrayOptions.press("Enter");
+  await nonEmpty.check();
+  await expect(arrayOptions).toHaveText("数组约束 · 已设置");
+  await nonEmpty.uncheck();
+  await arrayOptions.press("Enter");
+  await expect(nonEmpty).toBeHidden();
   await expect(ip).not.toBeChecked();
   await ip.check();
   await admin.check();
@@ -370,7 +388,7 @@ test("至少填写一个指定筛选参数才能试调用", async ({ page }, tes
   await expect(ip).toBeChecked();
   await expect(admin).toBeChecked();
   const args = page.getByLabel("调用参数（JSON）");
-  const run = page.getByRole("button", { name: "运行测试" });
+  const run = page.getByRole("button", { name: "发送请求" });
   const emptyFilter = '{"host_ip":[],"limit":10}';
   await args.fill(emptyFilter);
   await run.click();
@@ -378,7 +396,7 @@ test("至少填写一个指定筛选参数才能试调用", async ({ page }, tes
   await expect(args).toHaveValue(emptyFilter);
   await expect(page.locator(".toast")).toHaveCount(0);
   await page.getByRole("heading", { name: /^参数映射/ }).scrollIntoViewIfNeeded();
-  await page.screenshot({ path: testInfo.outputPath("query-filter-desktop.png") });
+  await page.screenshot({ path: testInfo.outputPath("editor-flow-desktop.png") });
 
   await args.fill('{"admin":["owner"]}');
   await run.click();
@@ -392,5 +410,9 @@ test("至少填写一个指定筛选参数才能试调用", async ({ page }, tes
   await expect(ip).toBeInViewport();
   await expect(admin).toBeInViewport();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await page.screenshot({ path: testInfo.outputPath("query-filter-mobile.png") });
+  await page.getByRole("button", { name: "试调用", exact: true }).click();
+  const trial = page.getByRole("region", { name: "试调用" });
+  await expect(trial).toBeFocused();
+  await expect(trial.getByRole("heading", { name: "试调用" })).toBeInViewport();
+  await page.screenshot({ path: testInfo.outputPath("editor-flow-mobile.png") });
 });

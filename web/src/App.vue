@@ -29,6 +29,7 @@ const publishing = ref(false);
 const sharing = ref(false);
 const calling = ref(false);
 const callArgs = ref("{}");
+const trialPanel = ref<HTMLElement | null>(null);
 const result = ref<CallResult | null>(null);
 const callError = ref("");
 const selectedOutputPaths = ref<string[]>([]);
@@ -494,6 +495,11 @@ async function removeTool(t: Tool) {
   }
 }
 
+function focusTrial() {
+  trialPanel.value?.scrollIntoView({ block: "start" });
+  trialPanel.value?.focus({ preventScroll: true });
+}
+
 async function runCall() {
   calling.value = true;
   result.value = null;
@@ -927,51 +933,50 @@ onUnmounted(() => {
         </div>
       </template>
       <template v-else-if="view === 'tools' && editor">
-        <header class="page-header editor-header">
+        <button class="back-button" @click="navigate('tools')">
+          ‹ 返回接口库
+        </button>
+        <header class="page-header editor-header" :class="{ 'editor-toolbar': !sharedTool }">
           <div>
-            <button class="back-button" @click="navigate('tools')">
-              ‹ 返回接口库
-            </button>
             <h1>
-              {{ selectedId === null ? "新建接口" : editor.name
-              }}<span :class="['badge', published ? 'success' : 'neutral']">{{
+              <span class="editor-title" :title="selectedId === null ? undefined : editor.name">
+                {{ selectedId === null ? "新建接口" : editor.name }}
+              </span>
+              <span :class="['badge', published ? 'success' : 'neutral']">{{
                 published ? "已发布" : "草稿"
               }}</span>
               <span v-if="selectedTool?.public" class="badge neutral">公共</span>
             </h1>
-            <p>{{ sharedTool ? editor.description : "定义请求、核对参数，再把接口发布为 MCP 工具。" }}</p>
+            <p v-if="sharedTool">{{ editor.description }}</p>
+            <p v-else-if="published">停用后可编辑。</p>
           </div>
           <div v-if="!sharedTool" class="button-row">
             <button
               class="button"
-              :disabled="selectedId === null || dirty || publishing"
-              @click="publish"
-            >
-              {{
-                publishing ? "正在更新…" : published ? "停用工具" : "发布工具"
-              }}</button
-            ><button
-              class="button primary"
+              :class="{ primary: !published && (selectedId === null || dirty) }"
               :disabled="saving || published"
               form="tool-form"
             >
               {{ saving ? "正在保存…" : "保存草稿" }}
             </button>
+            <button
+              class="button"
+              :class="{ primary: selectedId !== null && !dirty }"
+              @click="focusTrial"
+            >试调用</button>
+            <button
+              class="button"
+              :disabled="selectedId === null || dirty || saving || publishing"
+              @click="publish"
+            >{{ publishing ? "正在更新…" : published ? "停用工具" : "发布工具" }}</button>
           </div>
         </header>
-        <div v-if="published && !sharedTool" class="alert info">
-          此接口已发布。需要修改时，请先停用工具，再保存并重新发布。
-        </div>
         <div class="editor-grid">
           <div class="editor-main">
             <form v-if="!sharedTool" id="tool-form" class="panel" @submit.prevent="save">
               <fieldset :disabled="published || saving">
                 <div class="panel-heading">
-                  <div>
-                    <h2>接口定义</h2>
-                    <p>名称用于客户端识别，描述帮助 AI 判断何时调用。</p>
-                  </div>
-                  <span class="step-label">HTTP</span>
+                  <h2>接口定义</h2>
                 </div>
                 <div class="form-content">
                   <div class="form-grid">
@@ -996,7 +1001,7 @@ onUnmounted(() => {
                       v-model="editor.description"
                       required
                       rows="2"
-                      placeholder="描述接口能完成什么操作，以及适合何时调用"
+                      placeholder="如按主机 IP 查询资产"
                     /></label
                   ><label
                     >接口地址
@@ -1046,21 +1051,17 @@ onUnmounted(() => {
                     接收完整 JSON 请求体
                   </label>
                   <p v-if="editor.wholeBody" class="field-help">
-                    在调用参数中填写 body，省略时发送无请求体的请求。
+                    在调用参数中填写 <code>body</code>。
                   </p>
                   <p v-else-if="canSendBody && (editor.bodyTemplate || bodyParameters.length)" class="field-help">
-                    如需接收完整请求体，请先移除请求体参数并清空模板。
+                    清空请求体映射和模板后可切换。
                   </p>
                 </div>
                 <div class="parameter-heading">
                   <div>
-                    <h2>
-                      参数映射
-                      <span class="muted">{{ editor.parameters.length }}</span>
-                    </h2>
-                    <p>固定值由服务端填入，不会出现在客户端输入中。</p>
-                    <p v-if="editor.parameters.some((p) => !p.fixed)">
-                      勾选筛选参数后，调用时至少要填其中一项。
+                    <h2>参数映射</h2>
+                    <p v-if="editor.parameters.some((p) => !p.fixed)" id="query-filter-rule">
+                      勾选筛选参数后，调用时至少填一项。
                     </p>
                   </div>
                   <button
@@ -1072,7 +1073,7 @@ onUnmounted(() => {
                   </button>
                 </div>
                 <div v-if="!editor.parameters.length" class="parameter-empty">
-                  此接口还没有参数。可以添加参数，或从 URL 提取固定查询值。
+                  暂无参数。
                 </div>
                 <div v-else class="table-wrap parameter-wrap">
                   <table class="parameter-table">
@@ -1098,7 +1099,7 @@ onUnmounted(() => {
                             v-model="p.description"
                             class="parameter-secondary-input"
                             :aria-label="`参数 ${index + 1} 描述`"
-                            placeholder="补充参数用途（选填）"
+                            placeholder="参数描述（选填）"
                           />
                         </td>
                         <td>
@@ -1127,10 +1128,11 @@ onUnmounted(() => {
                               {{ label }} · {{ type }}
                             </option>
                           </select>
-                          <div
+                          <details
                             v-if="p.type === 'array' && !p.fixed"
                             class="array-options"
                           >
+                            <summary>{{ p.nonEmpty || p.itemArrayField ? "数组约束 · 已设置" : "数组约束" }}</summary>
                             <label class="parameter-constraint">
                               <input
                                 v-model="p.nonEmpty"
@@ -1151,9 +1153,9 @@ onUnmounted(() => {
                               <span
                                 :id="`array-item-help-${index}`"
                                 class="array-item-help"
-                              >选填。填写后，每项的该字段须为非空数组。</span>
+                              >指定字段后，每项的该字段须为非空数组。</span>
                             </label>
-                          </div>
+                          </details>
                         </td>
                         <td>
                           <select
@@ -1177,6 +1179,7 @@ onUnmounted(() => {
                               v-model="p.queryFilter"
                               type="checkbox"
                               :aria-label="`参数 ${index + 1} 筛选参数`"
+                              aria-describedby="query-filter-rule"
                             />
                             筛选参数
                           </label>
@@ -1212,8 +1215,6 @@ onUnmounted(() => {
                   <p v-if="!canSendBody" class="body-method-warning">
                     {{ editor.method }} 不支持请求体。请调整请求方法或参数位置。
                   </p>
-                  <p v-if="editor.bodyTemplate">按下方模板生成上游请求体。</p>
-                  <p v-else>默认按参数名称生成 JSON 字段。嵌套对象或数组可使用模板。</p>
                   <details v-if="!published || editor.bodyTemplate" class="body-template">
                     <summary>{{ editor.bodyTemplate ? "嵌套 JSON 模板（已填写）" : "配置嵌套 JSON 模板" }}</summary>
                     <label for="body-template" class="sr-only">JSON 请求体模板</label>
@@ -1237,7 +1238,7 @@ onUnmounted(() => {
                     >从占位符生成参数</button>
                     <div v-if="bodyExtractionError" class="alert error" role="alert">{{ bodyExtractionError }}</div>
                     <p id="body-template-help">
-                      用带双引号的占位符引用每个请求体参数。数组参数可选填，省略时不发送引用它的数组条件或字段。其余参数须设为必填或固定值。
+                      占位符须加双引号。未填写的选填数组会省略对应条件或字段；其他参数须必填或固定。
                     </p>
                     <p v-if="bodyTemplateParameters.length" class="body-template-tokens">
                       <span>参数占位符</span>
@@ -1253,7 +1254,7 @@ onUnmounted(() => {
                   <div class="parameter-heading">
                     <div>
                       <h2 id="output-fields-title">输出字段</h2>
-                      <p>可从试调用的原始响应选字段，修改输出名称后预览。MCP 使用已保存的输出配置。</p>
+                      <p v-if="!availableOutputPaths.length && !published">试调用成功后可从响应中选取字段。</p>
                     </div>
                     <button type="button" class="button small" @click="addOutputField">
                       ＋ 添加输出字段
@@ -1334,20 +1335,18 @@ onUnmounted(() => {
                 </section>
               </fieldset>
             </form>
-            <section class="panel call-panel">
+            <section ref="trialPanel" class="panel call-panel" tabindex="-1" aria-labelledby="trial-title">
               <div class="panel-heading">
                 <div>
-                  <h2>试调用</h2>
-                  <p>
-                    仅填写动态参数；固定值会自动合并。此操作会真实请求上游接口。
-                  </p>
+                  <h2 id="trial-title">试调用</h2>
+                  <p>会向上游发送真实请求。</p>
                 </div>
                 <button
-                  class="button"
+                  class="button primary"
                   :disabled="selectedId === null || dirty || calling"
                   @click="runCall"
                 >
-                  {{ calling ? "请求中…" : "运行测试" }}
+                  {{ calling ? "请求中…" : "发送请求" }}
                 </button>
               </div>
               <div class="form-content">
@@ -1360,7 +1359,7 @@ onUnmounted(() => {
                   />
                 </label>
                 <p v-if="selectedId === null || dirty" class="field-help">
-                  请先保存当前配置，再运行测试。
+                  保存草稿后可发送请求。
                 </p>
                 <div v-if="callError" class="alert error" role="alert">
                   {{ callError }}
@@ -1389,7 +1388,6 @@ onUnmounted(() => {
                         {{ previewingOutput ? '生成中…' : '预览自定义结果' }}
                       </button>
                     </div>
-                    <p v-if="!currentOutput && !previewingOutput">用本次原始响应生成预览。</p>
                     <div v-if="currentOutput?.error" class="alert error" role="alert">{{ currentOutput.error }}</div>
                     <pre v-else-if="currentOutput?.body" aria-label="自定义结果 JSON">{{ currentOutput.body }}</pre>
                   </section>
@@ -1400,10 +1398,7 @@ onUnmounted(() => {
           <aside class="preview-column">
             <section class="panel preview-panel">
               <div class="panel-heading">
-                <div>
-                  <h2>工具预览</h2>
-                  <p>核对客户端可见的参数结构。</p>
-                </div>
+                <h2>工具预览</h2>
               </div>
               <div v-if="!sharedTool" class="preview-tabs">
                 <button
@@ -1429,12 +1424,8 @@ onUnmounted(() => {
                 previewText || "正在生成配置…"
               }}</pre>
               <div v-if="!sharedTool" class="preview-footer">
-                <span
-                  >{{
-                    editor.parameters.filter((p) => !p.fixed).length
-                  }}
-                  个动态参数</span
-                ><button
+                <span v-if="preview !== 'schema'">导出文件可能包含固定值。</span>
+                <button
                   class="text-button"
                   :disabled="!previewText || (dirty && preview !== 'schema')"
                   @click="downloadExport"
@@ -1443,13 +1434,6 @@ onUnmounted(() => {
                 </button>
               </div>
             </section>
-            <div v-if="!sharedTool" class="editor-tip">
-              <strong>让 AI 知道怎么用</strong>
-              <p>
-                描述里写清操作对象与用途，参数描述里给出示例。发布后，客户端就能发现这项工具。
-              </p>
-              <p>导出文件包含固定参数，请妥善保管。</p>
-            </div>
           </aside>
         </div>
       </template>
