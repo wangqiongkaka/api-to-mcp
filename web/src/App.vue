@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { parseTree } from "jsonc-parser";
+import HelpHint from "./HelpHint.vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import type { AccessToken, CallResult, Definition, Parameter, Tool, User } from "./types";
 import { definitionOf, emptyDefinition, podExample } from "./types";
 import { responsePaths } from "./outputPaths";
@@ -62,10 +64,10 @@ const parameterGroups = computed(() => {
   if (!definition) return [];
   const rows = definition.parameters.map((p, index) => ({ p, index }));
   return [
+    { key: "other", label: "参数映射", rows: rows.filter(({ p }) => p.in !== "body") },
     { key: "body", label: "JSON 请求体", rows: rows.filter(({ p }) => p.in === "body") },
-    { key: "other", label: "其他请求参数", rows: rows.filter(({ p }) => p.in !== "body") },
-  ].filter(group => group.rows.length || (group.key === "body" && !definition.wholeBody &&
-    ((canSendBody.value && !published.value) || definition.bodyTemplate)));
+  ].filter(group => group.key === "other" || group.rows.length || definition.wholeBody ||
+    (canSendBody.value && !published.value) || definition.bodyTemplate);
 });
 const successfulResponse = computed(
   () => result.value && result.value.statusCode >= 200 && result.value.statusCode < 300,
@@ -255,35 +257,20 @@ function openEditor(definition: Definition, id: number | null = null) {
   callError.value = "";
   selectedOutputPaths.value = [];
   outputResult.value = null;
-  const sample: Record<string, unknown> = Object.create(null);
-  if (definition.wholeBody) sample.body = {};
-  for (const p of definition.parameters) {
-    if (p.fixed || (definition.bodyTemplate && p.in === "body" && p.type === "array" && !p.required)) continue;
-    sample[p.name] =
-      p.type === "boolean"
-        ? false
-        : p.type === "number" || p.type === "integer"
-          ? 0
-          : p.type === "object"
-            ? {}
-            : p.type === "array"
-              ? []
-              : p.name === "podIp"
-                ? "10.60.144.183"
-                : "";
-  }
-  callArgs.value = JSON.stringify(sample, null, 2);
+  syncedFields = [];
+  callArgs.value = "{}";
+  syncCallArgs();
 }
 
 function newTool(example = false) {
   openEditor(example ? podExample() : emptyDefinition());
 }
 
-function addParameter() {
+function addParameter(location: "query" | "body") {
   editor.value?.parameters.push({
     name: "",
     description: "",
-    in: "query",
+    in: location,
     type: "string",
     required: true,
     fixed: false,
@@ -409,22 +396,65 @@ function extractBodyParameters() {
   }
 }
 
-function removeFixedCallArgs(parameters: Definition["parameters"]) {
-  const fixedNames = new Set(parameters.filter((p) => p.fixed).map((p) => p.name));
-  if (fixedNames.size === 0) return;
-  let args: unknown;
-  try {
-    args = JSON.parse(callArgs.value);
-  } catch {
-    // 保留尚未编辑完成的 JSON，避免覆盖用户输入。
-    return;
-  }
-  if (args === null || typeof args !== "object" || Array.isArray(args)) return;
-  const entries = Object.entries(args);
-  const remaining = entries.filter(([name]) => !fixedNames.has(name));
-  if (remaining.length !== entries.length)
-    callArgs.value = JSON.stringify(Object.fromEntries(remaining), null, 2);
+interface TrialField {
+  name: string;
+  type: Parameter["type"] | "json";
+  parameter?: Parameter;
+  defaultValue: unknown;
 }
+
+const trialFields = computed(() => {
+  const fields: TrialField[] = [];
+  if (editor.value?.wholeBody) fields.push({ name: "body", type: "json", defaultValue: {} });
+  for (const p of editor.value?.parameters ?? []) {
+    if (p.fixed || !p.name.trim()) continue;
+    const defaults = { string: p.name === "podIp" ? "10.60.144.183" : "", array: [], object: {},
+      boolean: p.queryFilter ? null : false, integer: p.queryFilter ? null : 0, number: p.queryFilter ? null : 0 };
+    fields.push({ name: p.name, type: p.type, parameter: p, defaultValue: defaults[p.type] });
+  }
+  return fields;
+});
+
+let syncedFields: TrialField[] = [];
+function syncCallArgs() {
+  const fields = trialFields.value;
+  if (syncedFields === fields) return;
+  const text = callArgs.value;
+  try {
+    JSON.parse(text);
+  } catch {
+    return; // 等用户完成正在编辑的 JSON。
+  }
+  const root = parseTree(text);
+  if (root?.type !== "object") return;
+  const values = new Map<string, string>();
+  for (const property of root.children ?? []) {
+    const [key, value] = property.children!;
+    values.set(key.value, text.slice(value.offset, value.offset + value.length));
+  }
+  const next = new Map(values);
+  const names = new Set(fields.map(field => field.name));
+  for (const old of syncedFields) {
+    if (!names.has(old.name)) next.delete(old.name);
+  }
+  for (const field of fields) {
+    const old = syncedFields.find(f => field.parameter && f.parameter === field.parameter)
+      ?? syncedFields.find(f => f.name === field.name);
+    if (!old || old.type !== field.type) {
+      if (old || !values.has(field.name)) next.set(field.name, JSON.stringify(field.defaultValue));
+    } else if (old.name !== field.name && values.has(old.name)) {
+      next.set(field.name, values.get(old.name)!);
+    }
+  }
+  for (const p of editor.value?.parameters ?? []) {
+    if (p.fixed) next.delete(p.name);
+  }
+  syncedFields = fields;
+  if (next.size === values.size && [...next].every(([key, value]) => values.get(key) === value)) return;
+  const lines = [...next].map(([name, value]) => `  ${JSON.stringify(name)}: ${value}`);
+  callArgs.value = lines.length ? `{\n${lines.join(",\n")}\n}` : "{}";
+}
+watch([trialFields, callArgs], syncCallArgs);
 
 async function save() {
   if (!editor.value) return;
@@ -440,7 +470,6 @@ async function save() {
     );
     await refreshTools();
     editor.value = definitionOf(record);
-    removeFixedCallArgs(record.parameters);
     selectedId.value = record.id;
     baseline.value = JSON.stringify(editor.value);
     preview.value = "schema";
@@ -1034,7 +1063,7 @@ onUnmounted(() => {
                       /></div
                   ></label>
                   <div class="field-help">
-                    <span>路径变量使用 <code>{id}</code>。</span>
+                    <HelpHint label="路径变量说明" text="接口地址中的路径变量使用 {id} 格式。" />
                     <button
                       type="button"
                       class="text-button"
@@ -1043,8 +1072,23 @@ onUnmounted(() => {
                       提取 URL 查询参数
                     </button>
                   </div>
+                </div>
+                <section v-for="group in parameterGroups" :key="group.key"
+                  class="parameter-group" :aria-label="group.label">
+                  <div class="parameter-heading">
+                    <div class="group-title">
+                      <h2>{{ group.label }}</h2>
+                      <HelpHint label="参数配置说明" :text="group.key === 'body'
+                        ? '请求体字段可由客户端填写或使用固定值。勾选的筛选参数中，调用时至少填写一项。'
+                        : '可添加查询参数、路径参数和请求头。勾选的筛选参数中，调用时至少填写一项。'" />
+                    </div>
+                    <button v-if="group.key !== 'body' || (!editor.wholeBody && canSendBody)"
+                      type="button" class="button small" @click="addParameter(group.key === 'body' ? 'body' : 'query')">
+                      ＋ {{ group.key === "body" ? "添加请求体参数" : "添加参数" }}
+                    </button>
+                  </div>
+                  <div v-if="group.key === 'body' && (editor.wholeBody || canSendBody)" class="body-mode-row">
                   <label
-                    v-if="editor.wholeBody || canSendBody"
                     class="whole-body-control"
                   >
                     <input
@@ -1054,41 +1098,14 @@ onUnmounted(() => {
                     />
                     接收完整 JSON 请求体
                   </label>
-                  <p v-if="editor.wholeBody" class="field-help">
-                    在调用参数中填写 <code>body</code>。
-                  </p>
-                  <p v-else-if="canSendBody && (editor.bodyTemplate || bodyParameters.length)" class="field-help">
-                    清空请求体映射和模板后可切换。
-                  </p>
-                </div>
-                <div class="parameter-heading">
-                  <div>
-                    <h2>参数映射</h2>
-                    <p v-if="editor.parameters.some((p) => !p.fixed)" id="query-filter-rule">
-                      勾选筛选参数后，调用时至少填一项。
-                    </p>
+                    <HelpHint label="完整请求体说明" text="启用后，在调用参数的 body 中填写完整 JSON。清空请求体字段和模板后可切换。" />
                   </div>
-                  <button
-                    type="button"
-                    class="button small"
-                    @click="addParameter"
-                  >
-                    ＋ 添加参数
-                  </button>
-                </div>
-                <div v-if="!editor.parameters.length" class="parameter-empty">
-                  暂无参数。
-                </div>
-                <section v-for="group in parameterGroups" :key="group.key"
-                  class="parameter-group" :aria-label="group.label">
-                  <details class="parameter-branch" open>
-                    <summary>{{ group.label }}</summary>
                     <div v-if="group.rows.length" class="table-wrap parameter-wrap">
                       <table class="parameter-table">
                         <thead>
                           <tr>
                             <th scope="col">参数名称 / 描述</th>
-                            <th scope="col">位置</th>
+                            <th v-if="group.key !== 'body'" scope="col">位置</th>
                             <th scope="col">类型</th>
                             <th scope="col">映射方式 / 固定值</th>
                             <th scope="col" class="checkbox-cell">筛选参数</th>
@@ -1112,7 +1129,7 @@ onUnmounted(() => {
                                 placeholder="参数描述（选填）"
                               />
                             </td>
-                            <td>
+                            <td v-if="group.key !== 'body'">
                               <select
                                 v-model="p.in"
                                 :aria-label="`参数 ${index + 1} 位置`"
@@ -1120,7 +1137,6 @@ onUnmounted(() => {
                                 <option value="query">查询参数</option>
                                 <option value="path">路径参数</option>
                                 <option value="header">请求头</option>
-                                <option value="body" :disabled="editor.wholeBody">请求体</option>
                               </select>
                             </td>
                             <td>
@@ -1163,7 +1179,6 @@ onUnmounted(() => {
                                 type="checkbox"
                                 :disabled="p.fixed"
                                 :aria-label="`参数 ${index + 1} 筛选参数`"
-                                aria-describedby="query-filter-rule"
                               />
                             </td>
                             <td class="checkbox-cell">
@@ -1196,9 +1211,9 @@ onUnmounted(() => {
                         </tbody>
                       </table>
                     </div>
-                    <div v-if="group.key === 'body'" class="mapped-body">
+                    <div v-if="group.key === 'body' && !editor.wholeBody" class="mapped-body">
                       <p v-if="!canSendBody" class="body-method-warning">
-                        {{ editor.method }} 不支持请求体。请调整请求方法或参数位置。
+                        {{ editor.method }} 不支持请求体。请调整请求方法或移除请求体配置。
                       </p>
                       <details v-if="!published || editor.bodyTemplate" class="body-template">
                         <summary>{{ editor.bodyTemplate ? "嵌套 JSON 模板（已填写）" : "配置嵌套 JSON 模板" }}</summary>
@@ -1210,7 +1225,6 @@ onUnmounted(() => {
                           maxlength="32768"
                           spellcheck="false"
                           class="code-input"
-                          aria-describedby="body-template-help"
                           placeholder='{"items":["{{value}}"]}'
                           @input="bodyExtractionError = ''"
                         />
@@ -1222,9 +1236,7 @@ onUnmounted(() => {
                           @click="extractBodyParameters"
                         >从占位符生成参数</button>
                         <div v-if="bodyExtractionError" class="alert error" role="alert">{{ bodyExtractionError }}</div>
-                        <p id="body-template-help">
-                          占位符须加双引号。未填写的选填数组会省略对应条件或字段；其他参数须必填或固定。
-                        </p>
+                        <HelpHint label="模板占位符说明" text="占位符须加双引号。未填写的选填数组会省略对应条件或字段，其他参数须必填或固定。" />
                         <p v-if="bodyTemplateParameters.length" class="body-template-tokens">
                           <span>参数占位符</span>
                           <code
@@ -1235,13 +1247,12 @@ onUnmounted(() => {
                         </p>
                       </details>
                     </div>
-                  </details>
                 </section>
                 <section aria-labelledby="output-fields-title">
                   <div class="parameter-heading">
-                    <div>
+                    <div class="group-title">
                       <h2 id="output-fields-title">输出字段</h2>
-                      <p v-if="!availableOutputPaths.length && !published">试调用成功后可从响应中选取字段。</p>
+                      <HelpHint v-if="!availableOutputPaths.length && !published" label="输出字段说明" text="试调用成功后可从响应中选取字段。" />
                     </div>
                     <button type="button" class="button small" @click="addOutputField">
                       ＋ 添加输出字段
@@ -1324,9 +1335,9 @@ onUnmounted(() => {
             </form>
             <section ref="trialPanel" class="panel call-panel" tabindex="-1" aria-labelledby="trial-title">
               <div class="panel-heading">
-                <div>
+                <div class="group-title">
                   <h2 id="trial-title">试调用</h2>
-                  <p>会向上游发送真实请求。</p>
+                  <HelpHint label="试调用说明" text="会向上游发送真实请求。" />
                 </div>
                 <button
                   class="button primary"

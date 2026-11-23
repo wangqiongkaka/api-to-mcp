@@ -238,10 +238,12 @@ test("请求体配置按需展开并保留已保存的模板", async ({ page }) 
   const template = page.getByLabel("JSON 请求体模板", { exact: true });
   await expect(template).toBeHidden();
   await wholeBody.check();
-  await expect(body).toHaveCount(0);
-  await expect(location.getByRole("option", { name: "请求体", includeHidden: true })).toBeDisabled();
+  await expect(body.getByRole("button", { name: "添加请求体参数" })).toHaveCount(0);
+  await expect(location.getByRole("option", { name: "请求体", includeHidden: true })).toHaveCount(0);
   await wholeBody.uncheck();
-  await location.selectOption("body");
+  await page.getByLabel("删除参数 1").click();
+  await body.getByRole("button", { name: "添加请求体参数" }).click();
+  await page.getByLabel("参数 1 名称").fill("itemId");
   await expect(wholeBody).toBeDisabled();
   await expect(template).toBeHidden();
   await method.selectOption("GET");
@@ -309,13 +311,17 @@ test("从嵌套请求体模板生成参数并试调用", async ({ page }) => {
   await template.fill(json);
   await extract.click();
   await expect(names).toHaveCount(2);
+  const draftArgs = page.getByLabel("调用参数（JSON）");
+  expect(JSON.parse(await draftArgs.inputValue())).toEqual({ hostIps: "", room: "" });
+  await draftArgs.fill('{"hostIps":"","room":"机房一"}');
   await expect(names.first()).toHaveValue("hostIps");
   await expect(names.last()).toHaveValue("room");
-  await expect(page.getByLabel("参数 1 位置")).toHaveValue("body");
+  await expect(body.getByRole("columnheader", {name:"位置"})).toHaveCount(0);
   await expect(page.getByLabel("参数 1 必填")).toBeChecked();
   await page.getByLabel("参数 1 类型").selectOption("array");
   await extract.click();
   await expect(names).toHaveCount(2);
+  expect(JSON.parse(await draftArgs.inputValue())).toEqual({ hostIps: [], room: "机房一" });
   await expect(page.getByLabel("参数 1 类型")).toHaveValue("array");
 
   await template.fill('{"newField":"{{zone}}","conflict":"{{HostIps}}"}');
@@ -364,10 +370,9 @@ test("至少填写一个指定筛选参数才能试调用", async ({ page }, tes
   const admin = page.getByLabel("参数 2 筛选参数");
   const bodyGroup = page.getByRole("region", { name: "JSON 请求体", exact: true });
   await expect(bodyGroup.getByRole("columnheader", { name: "筛选参数" })).toBeVisible();
-  const branch = bodyGroup.locator(".parameter-branch > summary");
-  await branch.click();
-  await expect(ip).toBeHidden();
-  await branch.click();
+  const help = bodyGroup.getByRole("button", { name: "参数配置说明" });
+  await help.hover();
+  await expect(bodyGroup.getByRole("tooltip").filter({ hasText: "筛选参数" })).toBeVisible();
   await expect(ip).toBeVisible();
   const nonEmpty = page.getByLabel("参数 1 非空");
   await nonEmpty.check();
@@ -391,6 +396,9 @@ test("至少填写一个指定筛选参数才能试调用", async ({ page }, tes
   await expect(admin).toBeChecked();
   const args = page.getByLabel("调用参数（JSON）");
   const run = page.getByRole("button", { name: "发送请求" });
+  expect(JSON.parse(await args.inputValue())).toEqual({host_ip: [], admin: [], limit: 0});
+  await args.scrollIntoViewIfNeeded();
+  await page.locator(".call-panel").screenshot({path: testInfo.outputPath("trial-arguments.png")});
   const emptyFilter = '{"host_ip":[],"limit":10}';
   await args.fill(emptyFilter);
   await run.click();

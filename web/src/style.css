@@ -968,14 +968,9 @@ tbody tr:last-child td {
   font-size: 12px;
   border-top: 1px solid #edf0f5;
 }
-.parameter-branch > summary {
-  cursor: pointer;
-  font-weight: 600;
-  margin: 0;
-  padding: 10px 20px;
-  background: #edf1f8;
-  font-size: 14px;
-}
+.group-title, .body-mode-row { display: flex; align-items: center; gap: 8px; }
+.body-mode-row { padding: 0 20px 12px; }
+.parameter-group + .parameter-group { border-top: 1px solid var(--border); }
 .parameter-group .parameter-table td:first-child {
   position: relative;
   padding-left: 32px;
