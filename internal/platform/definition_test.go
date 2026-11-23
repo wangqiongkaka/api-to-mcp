@@ -6,14 +6,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/higress-group/openapi-to-mcpserver/pkg/models"
-	"github.com/higress-group/openapi-to-mcpserver/pkg/parser"
-	"gopkg.in/yaml.v3"
 )
 
 func sampleDefinition() Definition {
@@ -256,38 +251,6 @@ func TestDefinitionRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
-func TestWholeBodyLetsCallerChooseJSONOrNoBody(t *testing.T) {
-	d := sampleDefinition()
-	d.Method = "POST"
-	d.WholeBody = true
-	for _, want := range []string{"", "{}", "[]", "null", `{"id":9007199254740993,"queryParams":[]}`} {
-		raw := `{"podIp":"example"}`
-		if want != "" {
-			raw = `{"podIp":"example","body":` + want + "}"
-		}
-		args, err := d.decodeArguments([]byte(raw))
-		if err != nil {
-			t.Fatal(err)
-		}
-		r, err := d.BuildRequest(args)
-		if err != nil {
-			t.Fatal(err)
-		}
-		body, err := io.ReadAll(r.Body)
-		r.Body.Close()
-		if err != nil || string(body) != want || (r.Header.Get("Content-Type") == "application/json") != (want != "") {
-			t.Fatalf("请求体或内容类型不符：%q，期望 %q，错误 %v", body, want, err)
-		}
-		if r.URL.Query().Get("podIp") != "example" || r.URL.Query().Get("showAllPods") != "false" {
-			t.Fatal("完整请求体影响了其他参数映射")
-		}
-	}
-	d.Parameters = append(d.Parameters, Parameter{Name: "queryParams", In: "body", Type: "array"})
-	if err := d.Validate(); err == nil {
-		t.Fatal("同一接口同时启用了完整请求体和字段映射")
-	}
-}
-
 func TestBodyTemplateMapsClientValueIntoUpstreamArray(t *testing.T) {
 	d := sampleDefinition()
 	d.Method = "POST"
@@ -390,47 +353,6 @@ func TestBodyContentTypeCannotBeOverridden(t *testing.T) {
 	d.Parameters = append(d.Parameters, Parameter{Name: "data", In: "body", Type: "object"}, Parameter{Name: "Content-Type", In: "header", Type: "string", Fixed: true, Value: "text/plain"})
 	if err := d.Validate(); err == nil {
 		t.Fatal("请求体格式与 Content-Type 冲突未被拒绝")
-	}
-}
-
-func TestExportsReuseConverter(t *testing.T) {
-	d := sampleDefinition()
-	data, err := d.OpenAPI()
-	if err != nil {
-		t.Fatal(err)
-	}
-	p := parser.NewParser()
-	p.SetValidation(true)
-	if err = p.Parse(data); err != nil {
-		t.Fatal(err)
-	}
-	data, err = d.Higress()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cfg models.MCPConfig
-	if err = yaml.Unmarshal(data, &cfg); err != nil {
-		t.Fatal(err)
-	}
-	if len(cfg.Tools) != 1 || len(cfg.Tools[0].Args) != 1 || cfg.Tools[0].Args[0].Name != "podIp" {
-		t.Fatal("导出的动态参数不正确")
-	}
-	u, err := url.Parse(cfg.Tools[0].RequestTemplate.URL)
-	if err != nil || u.Query().Get("showAllPods") != "false" {
-		t.Fatal("固定参数未写入导出地址")
-	}
-	d.URL = "https://example.com/{id}"
-	d.Parameters = []Parameter{{Name: "id", In: "path", Type: "string", Fixed: true, Value: "a/b"}}
-	data, err = d.Higress()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = yaml.Unmarshal(data, &cfg); err != nil {
-		t.Fatal(err)
-	}
-	u, err = url.Parse(cfg.Tools[0].RequestTemplate.URL)
-	if err != nil || u.EscapedPath() != "/a%2Fb" {
-		t.Fatalf("固定路径转义错误：%s", data)
 	}
 }
 

@@ -11,7 +11,7 @@
 - 固定参数由服务端填写且禁止客户端覆盖；动态参数生成 MCP 输入结构。
 - 草稿保存、真实试调用、发布、停用和删除。已发布接口必须先停用才可修改。
 - 个人 MCP 令牌创建与撤销。令牌可调用已发布的自有和公共工具。
-- 导出 OpenAPI 与 Higress YAML；核心转换复用原项目的解析器、转换器和配置模型。
+- 导出 OpenAPI 配置。
 
 ## 快速启动
 
@@ -59,9 +59,8 @@ docker compose --profile full up -d --build
 
 JSON 请求体由 `body` 位置的参数组成一个对象。嵌套数据用 `object` 或 `array` 类型参数传入。数组和对象不支持放入 query/path/header。路径变量使用 `{id}`，其动态参数必须标记为必填。
 
-也可在接口编辑页启用「接收完整 JSON 请求体」。调用方用 `{"body":{"queryParams":[]}}` 传入完整请求体，省略 `body` 时不发送请求体。启用前需移除该接口的请求体字段映射。Higress 导出暂不支持此模式。
 
-需要将简单的调用参数放入嵌套请求体时，可填写「JSON 请求体模板」。例如配置名为 `value` 的必填字符串请求体参数，模板 `{"queryParams":[{"uniqueCode":"字段标识","value":["{{value}}"]}]}` 会把调用方传入的 `value` 写进数组。Higress 导出暂不支持请求体模板。
+需要将简单的调用参数放入嵌套请求体时，可填写「JSON 请求体模板」。例如配置名为 `value` 的必填字符串请求体参数，模板 `{"queryParams":[{"uniqueCode":"字段标识","value":["{{value}}"]}]}` 会把调用方传入的 `value` 写进数组。
 
 数组参数可以取消「必填」。未传选填数组时，模板会省略引用它的数组对象项。占位符直接用作普通字段或数组元素时，会省略该字段或元素。显式传入数组时仍会校验「数组不为空」和元素字段约束。
 
@@ -73,7 +72,7 @@ URL 中原有查询字符串会保留为固定基础值，参数表同名 query 
 
 在「输出字段」中可以精简或重命名成功响应。比如将响应路径 `/data/users/0/id` 配置为 `userId`，再添加固定 JSON 值 `"crm"` 到 `source`。试调用和内置 MCP 服务只返回这些字段。响应路径使用 JSON Pointer，数组下标从 0 开始，键名里的 `~` 和 `/` 分别写成 `~0` 和 `~1`。路径缺失或需要提取时上游正文无法解析为 JSON，调用会报告映射失败。
 
-输出字段留空时返回原始响应。上游非 2xx 响应保留原状态码和正文。OpenAPI 和 Higress 导出仍面向原上游接口。
+输出字段留空时返回原始响应。上游非 2xx 响应保留原状态码和正文。OpenAPI 导出仍面向原上游接口。
 
 试调用后可从原始响应选择路径，修改输出名称，再点击「预览自定义结果」。预览复用本次响应。数组路径中的 `*` 表示提取每条记录，例如 `/data/list/*/totalIp` 返回 IP 数组。
 
@@ -139,7 +138,6 @@ compose.yaml        PostgreSQL 与完整容器部署配置
 DESIGN.md           界面规范
 ```
 
-通过 Go module 固定引用原项目 `github.com/higress-group/openapi-to-mcpserver` 的 `e938e6304912` 版本，导出链路调用 `parser.NewParser`、`converter.NewConverter` 和 `models.MCPConfig`，无需依赖同级项目目录或本地 replace。
 
 独立运行层使用[官方 Go MCP SDK](https://github.com/modelcontextprotocol/go-sdk/tree/v1.8.0)。选择 PostgreSQL 是为了公司账户与配置的集中管理和后续扩展；SQLite 也适用于低写并发单机应用，相关边界见 [SQLite 官方说明](https://sqlite.org/whentouse.html)。
 
@@ -152,5 +150,5 @@ DESIGN.md           界面规范
 - 工具以 JSON 对象请求体为主，不支持 multipart 文件上传、流式大响应和任意模板执行。
 - 登录限流为单进程内 IP 限流，多实例部署需要共享限流。Origin 校验依赖反向代理保留 Host。
 - 请备份数据库与 `ENCRYPTION_KEY`；丢失密钥后无法恢复已加密的接口配置。修改 `.env` 的初始管理员密码不会重置已存在账户。
-- 导出可能包含固定凭据。Higress 导出将固定 query/path/header 写入请求模板；固定 body 字段以单值枚举和默认值表示，未做 Higress 运行时兼容性验收。
+- 导出可能包含固定凭据。
 - 公司内网 Pod 示例在此前环境中连接超时，实际接口响应和鉴权要求仍需在公司网络中验证。

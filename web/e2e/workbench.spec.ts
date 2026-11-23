@@ -64,14 +64,10 @@ test("注册、配置、试调用、发布、导出和令牌管理", async ({ pa
   await expect(page.locator(".schema-preview")).toContainText(
     '"openapi": "3.0.3"',
   );
-  await page.getByRole("button", { name: "Higress", exact: true }).click();
-  await expect(page.locator(".schema-preview")).toContainText(
-    "showAllPods=false",
-  );
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "下载配置" }).click();
   expect((await download).suggestedFilename()).toBe(
-    "getPodInstance-higress.yaml",
+    "getPodInstance-openapi.json",
   );
   await page.getByRole("button", { name: "发布工具", exact: true }).click();
   await expect(page.getByRole("button", { name: "停用工具" })).toBeVisible();
@@ -237,14 +233,15 @@ test("请求体配置按需展开并保留已保存的模板", async ({ page }) 
   const wholeBody = page.getByLabel("接收完整 JSON 请求体");
   const template = page.getByLabel("JSON 请求体模板", { exact: true });
   await expect(template).toBeHidden();
-  await wholeBody.check();
+  await expect(wholeBody).toHaveCount(0);
   await expect(body.getByRole("button", { name: "添加请求体参数" })).toHaveCount(0);
   await expect(location.getByRole("option", { name: "请求体", includeHidden: true })).toHaveCount(0);
-  await wholeBody.uncheck();
   await page.getByLabel("删除参数 1").click();
-  await body.getByRole("button", { name: "添加请求体参数" }).click();
-  await page.getByLabel("参数 1 名称").fill("itemId");
-  await expect(wholeBody).toBeDisabled();
+  await body.locator("summary").click();
+  await template.fill('{"id":"{{itemId}}"}');
+  await body.getByRole("button", {name:"从占位符生成参数"}).click();
+  await template.fill("");
+  await body.locator("summary").click();
   await expect(template).toBeHidden();
   await method.selectOption("GET");
   await expect(body).toContainText("GET 不支持请求体");
@@ -261,12 +258,12 @@ test("请求体配置按需展开并保留已保存的模板", async ({ page }) 
   await send.click();
   await expect(page.locator(".call-result pre")).toContainText('"itemId": 42');
 
-  await body.getByText("配置嵌套 JSON 模板", { exact: true }).press("Enter");
+  await body.getByText("请求体模板", { exact: true }).press("Enter");
   await expect(template).toBeVisible();
   await expect(body.locator("code")).toHaveText('"{{itemId}}"');
   const json = '{"items":["{{itemId}}"]}';
   await template.fill(json);
-  await body.getByText("嵌套 JSON 模板（已填写）", { exact: true }).click();
+  await body.getByText("请求体模板", { exact: true }).click();
   await expect(template).toBeHidden();
 
   await save.click();
@@ -274,7 +271,7 @@ test("请求体配置按需展开并保留已保存的模板", async ({ page }) 
   await page.getByRole("button", { name: "返回接口库" }).click();
   await page.getByRole("button", { name: "配置", exact: true }).click();
   await expect(template).toBeHidden();
-  await body.getByText("嵌套 JSON 模板（已填写）", { exact: true }).click();
+  await body.getByText("请求体模板", { exact: true }).click();
   await expect(template).toHaveValue(json);
   await expect(type).toHaveValue("integer");
 
@@ -293,7 +290,7 @@ test("从嵌套请求体模板生成参数并试调用", async ({ page }) => {
   await page.getByLabel("接口地址", { exact: true }).fill("http://127.0.0.1:8099/items");
   await page.getByLabel("请求方法").selectOption("POST");
   const body = page.getByRole("region", { name: "JSON 请求体", exact: true });
-  await body.getByText("配置嵌套 JSON 模板", { exact: true }).click();
+  await body.getByText("请求体模板", { exact: true }).click();
   const template = body.getByLabel("JSON 请求体模板", { exact: true });
   const extract = body.getByRole("button", { name: "从占位符生成参数" });
   await expect(extract).toBeDisabled();
@@ -334,7 +331,7 @@ test("从嵌套请求体模板生成参数并试调用", async ({ page }) => {
   await page.getByRole("button", { name: "返回接口库" }).click();
   await page.getByRole("button", { name: "配置", exact: true }).click();
   await expect(page.getByLabel("参数 1 类型")).toHaveValue("array");
-  await body.getByText("嵌套 JSON 模板（已填写）", { exact: true }).click();
+  await body.getByText("请求体模板", { exact: true }).click();
   await expect(template).toHaveValue(json);
 
   await page.getByLabel("调用参数（JSON）").fill('{"hostIps":["192.0.2.1"],"room":"test-room"}');
@@ -366,6 +363,15 @@ test("至少填写一个指定筛选参数才能试调用", async ({ page }, tes
   expect(created.status()).toBe(201);
   await page.reload();
   await page.getByRole("button", { name: "配置", exact: true }).click();
+  const addressTitle = page.locator("label[for='endpoint-url']");
+  const hint = page.getByRole("button", {name: "路径变量说明"});
+  await addressTitle.evaluate(el => el.scrollIntoView({block:"start"}));
+  await page.evaluate(() => window.scrollBy(0, -100));
+  const titleBox = (await addressTitle.boundingBox())!;
+  const hintBox = (await hint.boundingBox())!;
+  expect(hintBox.x).toBeGreaterThanOrEqual(titleBox.x + titleBox.width);
+  expect(Math.abs(hintBox.y + hintBox.height / 2 - titleBox.y - titleBox.height / 2)).toBeLessThan(2);
+  await page.screenshot({path: testInfo.outputPath("editor-inline-help.png")});
   const ip = page.getByLabel("参数 1 筛选参数");
   const admin = page.getByLabel("参数 2 筛选参数");
   const bodyGroup = page.getByRole("region", { name: "JSON 请求体", exact: true });

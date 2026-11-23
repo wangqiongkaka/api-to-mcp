@@ -40,7 +40,7 @@ const outputResult = ref<{ fields: string; body?: string; error?: string } | nul
 const tokenName = ref("");
 const createdToken = ref("");
 const tokenBusy = ref(false);
-const preview = ref<"schema" | "openapi" | "higress">("schema");
+const preview = ref<"schema" | "openapi">("schema");
 const exported = ref("");
 const parameterTypes: Record<Parameter["type"], string> = {
   string: "字符串",
@@ -66,7 +66,7 @@ const parameterGroups = computed(() => {
   return [
     { key: "other", label: "参数映射", rows: rows.filter(({ p }) => p.in !== "body") },
     { key: "body", label: "JSON 请求体", rows: rows.filter(({ p }) => p.in === "body") },
-  ].filter(group => group.key === "other" || group.rows.length || definition.wholeBody ||
+  ].filter(group => group.key === "other" || group.rows.length ||
     (canSendBody.value && !published.value) || definition.bodyTemplate);
 });
 const successfulResponse = computed(
@@ -104,9 +104,6 @@ const schema = computed(() => {
   const properties: Record<string, unknown> = Object.create(null);
   const required: string[] = [];
   const filters: string[] = [];
-  if (editor.value?.wholeBody) {
-    properties.body = { description: "完整的 JSON 请求体，省略时不发送请求体" };
-  }
   for (const p of editor.value?.parameters ?? []) {
     if (p.fixed || !p.name) continue;
     properties[p.name] = {
@@ -266,11 +263,11 @@ function newTool(example = false) {
   openEditor(example ? podExample() : emptyDefinition());
 }
 
-function addParameter(location: "query" | "body") {
+function addParameter() {
   editor.value?.parameters.push({
     name: "",
     description: "",
-    in: location,
+    in: "query",
     type: "string",
     required: true,
     fixed: false,
@@ -344,7 +341,7 @@ function extractQuery() {
 
 function extractBodyParameters() {
   const definition = editor.value;
-  if (!definition?.bodyTemplate || definition.wholeBody || !canSendBody.value || published.value) return;
+  if (!definition?.bodyTemplate || !canSendBody.value || published.value) return;
   bodyExtractionError.value = "";
   try {
     let body: unknown;
@@ -405,7 +402,6 @@ interface TrialField {
 
 const trialFields = computed(() => {
   const fields: TrialField[] = [];
-  if (editor.value?.wholeBody) fields.push({ name: "body", type: "json", defaultValue: {} });
   for (const p of editor.value?.parameters ?? []) {
     if (p.fixed || !p.name.trim()) continue;
     const defaults = { string: p.name === "podIp" ? "10.60.144.183" : "", array: [], object: {},
@@ -546,9 +542,7 @@ async function runCall() {
       throw new Error("调用参数必须是 JSON 对象");
     const response = await api<CallResult>(`/tools/${id}/call`, {
       method: "POST",
-      body: editor.value?.wholeBody
-        ? `{"arguments":${callArgs.value},"raw":${!sharedTool.value}}`
-        : JSON.stringify({ arguments: args, raw: !sharedTool.value }),
+      body: JSON.stringify({ arguments: args, raw: !sharedTool.value }),
     });
     if (selectedId.value !== id) return;
     result.value = response;
@@ -578,7 +572,7 @@ async function previewOutput() {
   }
 }
 
-async function loadExport(format: "schema" | "openapi" | "higress") {
+async function loadExport(format: "schema" | "openapi") {
   preview.value = format;
   exported.value = "";
   if (format === "schema" || selectedId.value === null) return;
@@ -601,7 +595,7 @@ function downloadExport() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `${editor.value?.name || "tool"}-${preview.value}.${preview.value === "higress" ? "yaml" : "json"}`;
+  a.download = `${editor.value?.name || "tool"}-${preview.value}.json`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -1035,9 +1029,15 @@ onUnmounted(() => {
                       required
                       rows="2"
                       placeholder="如按主机 IP 查询资产"
-                    /></label
-                  ><label
-                    >接口地址
+                    /></label>
+                  <div class="url-field">
+                    <div class="url-heading">
+                      <div class="group-title">
+                        <label for="endpoint-url">接口地址</label>
+                        <HelpHint label="路径变量说明" text="接口地址中的路径变量使用 {id} 格式。" />
+                      </div>
+                      <button type="button" class="text-button" @click="extractQuery">提取 URL 查询参数</button>
+                    </div>
                     <div class="request-input">
                       <select v-model="editor.method" aria-label="请求方法">
                         <option
@@ -1055,23 +1055,12 @@ onUnmounted(() => {
                           {{ method }}
                         </option></select
                       ><input
-                        v-model="editor.url"
+                        id="endpoint-url" v-model="editor.url"
                         required
                         type="url"
                         placeholder="https://api.example.com/users/{id}"
                         aria-label="接口地址"
-                      /></div
-                  ></label>
-                  <div class="field-help">
-                    <HelpHint label="路径变量说明" text="接口地址中的路径变量使用 {id} 格式。" />
-                    <button
-                      type="button"
-                      class="text-button"
-                      @click="extractQuery"
-                    >
-                      提取 URL 查询参数
-                    </button>
-                  </div>
+                      /></div></div>
                 </div>
                 <section v-for="group in parameterGroups" :key="group.key"
                   class="parameter-group" :aria-label="group.label">
@@ -1082,23 +1071,10 @@ onUnmounted(() => {
                         ? '请求体字段可由客户端填写或使用固定值。勾选的筛选参数中，调用时至少填写一项。'
                         : '可添加查询参数、路径参数和请求头。勾选的筛选参数中，调用时至少填写一项。'" />
                     </div>
-                    <button v-if="group.key !== 'body' || (!editor.wholeBody && canSendBody)"
-                      type="button" class="button small" @click="addParameter(group.key === 'body' ? 'body' : 'query')">
-                      ＋ {{ group.key === "body" ? "添加请求体参数" : "添加参数" }}
+                    <button v-if="group.key !== 'body'"
+                      type="button" class="button small" @click="addParameter()">
+                      ＋ 添加参数
                     </button>
-                  </div>
-                  <div v-if="group.key === 'body' && (editor.wholeBody || canSendBody)" class="body-mode-row">
-                  <label
-                    class="whole-body-control"
-                  >
-                    <input
-                      v-model="editor.wholeBody"
-                      type="checkbox"
-                      :disabled="!editor.wholeBody && (Boolean(editor.bodyTemplate) || bodyParameters.length > 0)"
-                    />
-                    接收完整 JSON 请求体
-                  </label>
-                    <HelpHint label="完整请求体说明" text="启用后，在调用参数的 body 中填写完整 JSON。清空请求体字段和模板后可切换。" />
                   </div>
                     <div v-if="group.rows.length" class="table-wrap parameter-wrap">
                       <table class="parameter-table">
@@ -1211,12 +1187,12 @@ onUnmounted(() => {
                         </tbody>
                       </table>
                     </div>
-                    <div v-if="group.key === 'body' && !editor.wholeBody" class="mapped-body">
+                    <div v-if="group.key === 'body'" class="mapped-body">
                       <p v-if="!canSendBody" class="body-method-warning">
                         {{ editor.method }} 不支持请求体。请调整请求方法或移除请求体配置。
                       </p>
                       <details v-if="!published || editor.bodyTemplate" class="body-template">
-                        <summary>{{ editor.bodyTemplate ? "嵌套 JSON 模板（已填写）" : "配置嵌套 JSON 模板" }}</summary>
+                        <summary>请求体模板</summary>
                         <label for="body-template" class="sr-only">JSON 请求体模板</label>
                         <textarea
                           id="body-template"
@@ -1228,15 +1204,16 @@ onUnmounted(() => {
                           placeholder='{"items":["{{value}}"]}'
                           @input="bodyExtractionError = ''"
                         />
-                        <button
+                        <div class="group-title"><button
                           v-if="canSendBody && !published"
                           type="button"
                           class="button small"
                           :disabled="!editor.bodyTemplate"
                           @click="extractBodyParameters"
                         >从占位符生成参数</button>
+                          <HelpHint v-if="canSendBody && !published" label="模板占位符说明" text="占位符须加双引号。未填写的选填数组会省略对应条件或字段，其他参数须必填或固定。" /></div>
                         <div v-if="bodyExtractionError" class="alert error" role="alert">{{ bodyExtractionError }}</div>
-                        <HelpHint label="模板占位符说明" text="占位符须加双引号。未填写的选填数组会省略对应条件或字段，其他参数须必填或固定。" />
+
                         <p v-if="bodyTemplateParameters.length" class="body-template-tokens">
                           <span>参数占位符</span>
                           <code
@@ -1409,14 +1386,7 @@ onUnmounted(() => {
                   :class="{ selected: preview === 'openapi' }"
                   @click="loadExport('openapi')"
                 >
-                  OpenAPI</button
-                ><button
-                  :disabled="selectedId === null || dirty"
-                  :class="{ selected: preview === 'higress' }"
-                  @click="loadExport('higress')"
-                >
-                  Higress
-                </button>
+                  OpenAPI</button>
               </div>
               <pre class="schema-preview">{{
                 previewText || "正在生成配置…"

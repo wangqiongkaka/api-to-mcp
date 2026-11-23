@@ -318,24 +318,16 @@ func (a *App) export(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var data []byte
-	var err error
-	format := r.URL.Query().Get("format")
-	switch format {
-	case "openapi":
-		data, err = record.OpenAPI()
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	case "higress":
-		data, err = record.Higress()
-		w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
-	default:
-		fail(w, 400, "导出格式应为 openapi 或 higress")
+	if r.URL.Query().Get("format") != "openapi" {
+		fail(w, 400, "导出格式应为 openapi")
 		return
 	}
+	data, err := record.OpenAPI()
 	if err != nil {
 		fail(w, 400, "生成配置失败："+err.Error())
 		return
 	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Write(data)
 }
 

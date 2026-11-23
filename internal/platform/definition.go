@@ -66,16 +66,13 @@ func (d Definition) Validate() error {
 	}
 	seen, paths := map[string]bool{}, map[string]bool{}
 	templateParams := map[string]any{}
-	if d.BodyTemplate != "" && (len(d.BodyTemplate) > 32768 || d.WholeBody) {
-		return fmt.Errorf("请求体模板最多 32768 字节，且不能与完整请求体模式同时使用")
-	}
-	hasBody, hasContentType := d.WholeBody, false
 	if d.WholeBody {
-		if d.Method == "GET" || d.Method == "HEAD" {
-			return fmt.Errorf("GET 和 HEAD 不支持请求体参数")
-		}
-		seen["body"] = true
+		return fmt.Errorf("完整请求体模式已移除，请配置请求体模板并重新保存")
 	}
+	if len(d.BodyTemplate) > 32768 {
+		return fmt.Errorf("请求体模板最多 32768 字节")
+	}
+	hasBody, hasContentType := false, false
 	for _, p := range d.Parameters {
 		if !parameterName.MatchString(p.Name) || seen[strings.ToLower(p.Name)] {
 			return fmt.Errorf("参数名称无效或重复：%s", p.Name)
@@ -101,9 +98,6 @@ func (d Definition) Validate() error {
 				return fmt.Errorf("数组与对象参数只能放在 JSON 请求体中：%s", p.Name)
 			}
 		case "body":
-			if d.WholeBody {
-				return fmt.Errorf("使用完整请求体时，请移除请求体字段映射")
-			}
 			hasBody = true
 			if d.BodyTemplate != "" {
 				if !p.Fixed && !p.Required && p.Type != "array" {
@@ -229,9 +223,6 @@ func (p Parameter) schema() map[string]any {
 
 func (d Definition) InputSchema() map[string]any {
 	properties := map[string]any{}
-	if d.WholeBody {
-		properties["body"] = map[string]any{"description": "完整的 JSON 请求体，省略时不发送请求体"}
-	}
 	required := []string{}
 	for _, p := range d.Parameters {
 		if p.Fixed {
@@ -287,27 +278,8 @@ func hasQueryFilterValue(value any) bool {
 
 func (d Definition) decodeArguments(data []byte) (map[string]any, error) {
 	var args map[string]any
-	if !d.WholeBody {
-		err := json.Unmarshal(data, &args)
-		return args, err
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil || raw == nil {
-		return nil, err
-	}
-	args = make(map[string]any, len(raw))
-	for name, value := range raw {
-		if name == "body" {
-			args[name] = value
-			continue
-		}
-		var decoded any
-		if err := json.Unmarshal(value, &decoded); err != nil {
-			return nil, err
-		}
-		args[name] = decoded
-	}
-	return args, nil
+	err := json.Unmarshal(data, &args)
+	return args, err
 }
 
 func (d Definition) BuildRequest(args map[string]any) (*http.Request, error) {
@@ -321,9 +293,6 @@ func (d Definition) BuildRequest(args map[string]any) (*http.Request, error) {
 		}
 	}
 	for name := range args {
-		if d.WholeBody && name == "body" {
-			continue
-		}
 		if _, ok := dynamic[name]; !ok {
 			return nil, fmt.Errorf("不允许传入未知或固定参数：%s", name)
 		}
@@ -400,17 +369,7 @@ func (d Definition) BuildRequest(args map[string]any) (*http.Request, error) {
 	u.RawQuery = q.Encode()
 	var data []byte
 	var renderedParameters []string
-	if value, exists := args["body"]; d.WholeBody && exists {
-		if raw, ok := value.(json.RawMessage); ok && json.Valid(raw) {
-			data = raw
-		} else {
-			var err error
-			data, err = json.Marshal(value)
-			if err != nil {
-				return nil, fmt.Errorf("body 必须是有效的 JSON")
-			}
-		}
-	} else if d.BodyTemplate != "" {
+	if d.BodyTemplate != "" {
 		var err error
 		data, renderedParameters, err = renderBodyTemplate(d.BodyTemplate, body)
 		if err != nil {

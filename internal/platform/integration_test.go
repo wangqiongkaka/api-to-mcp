@@ -181,10 +181,11 @@ func TestPlatformIntegration(t *testing.T) {
 	if bytes.Contains(encrypted, []byte("private-upstream-secret")) {
 		t.Fatal("上游凭据明文落库")
 	}
-	for _, format := range []string{"openapi", "higress"} {
-		if code := jsonRequest(t, alice, "GET", address+"/export?format="+format, nil, nil); code != 200 {
-			t.Fatalf("导出失败：%s", format)
-		}
+	if code := jsonRequest(t, alice, "GET", address+"/export?format=openapi", nil, nil); code != 200 {
+		t.Fatalf("OpenAPI 导出失败：%d", code)
+	}
+	if code := jsonRequest(t, alice, "GET", address+"/export?format=higress", nil, nil); code != 400 {
+		t.Fatalf("应拒绝已移除的格式：%d", code)
 	}
 	var call CallResult
 	if code := jsonRequest(t, alice, "POST", address+"/call", map[string]any{"arguments": map[string]any{"podIp": "10.60.144.183"}}, &call); code != 200 || call.StatusCode != 200 {
@@ -316,28 +317,8 @@ func TestPlatformIntegration(t *testing.T) {
 	}
 	whole := d
 	whole.Name, whole.Method, whole.WholeBody = "queryWithBody", "POST", true
-	var wholeTool ToolRecord
-	if code := jsonRequest(t, alice, "POST", server.URL+"/api/tools", whole, &wholeTool); code != 201 || !wholeTool.WholeBody {
-		t.Fatalf("完整请求体配置未保存：%d", code)
-	}
-	wholeAddress := fmt.Sprintf("%s/api/tools/%d", server.URL, wholeTool.ID)
-	if code := jsonRequest(t, alice, "POST", wholeAddress+"/publish", map[string]bool{"published": true}, nil); code != 200 {
-		t.Fatalf("完整请求体工具发布失败：%d", code)
-	}
-	for _, body := range []string{"", "null", `{"id":9007199254740993,"queryParams":[]}`} {
-		args := map[string]any{"podIp": "x"}
-		if body != "" {
-			args["body"] = json.RawMessage(body)
-		}
-		want, _ := json.Marshal(body)
-		var direct CallResult
-		if code := jsonRequest(t, alice, "POST", wholeAddress+"/call", map[string]any{"arguments": args}, &direct); code != 200 || strings.TrimSpace(direct.Body) != string(want) {
-			t.Fatalf("完整请求体试调用转发错误：%d，%q", code, direct.Body)
-		}
-		result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: whole.Name, Arguments: args})
-		if err != nil || result.IsError || !strings.Contains(result.Content[0].(*mcp.TextContent).Text, string(want)) {
-			t.Fatalf("完整请求体 MCP 调用转发错误：%v，%v", result, err)
-		}
+	if code := jsonRequest(t, alice, "POST", server.URL+"/api/tools", whole, nil); code != 400 {
+		t.Fatalf("完整请求体模式应被拒绝：%d", code)
 	}
 	other, err := New(ctx, cfg)
 	if err != nil {
@@ -412,9 +393,7 @@ func TestPlatformIntegration(t *testing.T) {
 		check(bob, "DELETE", sharedPath, nil, nil, 404)
 		check(bob, "POST", sharedPath+"/publish", publish, nil, 404)
 		check(bob, "PATCH", sharedPath+"/visibility", share, nil, 403)
-		for _, format := range []string{"openapi", "higress"} {
-			check(bob, "GET", sharedPath+"/export?format="+format, nil, nil, 404)
-		}
+		check(bob, "GET", sharedPath+"/export?format=openapi", nil, nil, 404)
 		check(client(), "POST", sharedPath+"/call", call, nil, 401)
 		var response CallResult
 		check(bob, "POST", sharedPath+"/call", call, &response, 200)

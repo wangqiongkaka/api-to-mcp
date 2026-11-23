@@ -23,7 +23,6 @@ export interface Definition {
   url: string;
   method: string;
   timeoutSeconds: number;
-  wholeBody?: boolean;
   bodyTemplate?: string;
   parameters: Parameter[];
   outputFields?: OutputField[];
@@ -103,7 +102,6 @@ export function definitionOf(d: Definition): Definition {
     url: d.url,
     method: d.method,
     timeoutSeconds: d.timeoutSeconds,
-    wholeBody: d.wholeBody,
     bodyTemplate: d.bodyTemplate,
     parameters: d.parameters.map((p) => ({ ...p })),
     outputFields: d.outputFields?.length ? d.outputFields.map((field) => ({ ...field })) : undefined,
