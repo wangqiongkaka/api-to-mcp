@@ -95,9 +95,8 @@ test("注册、配置、调试、发布、导出和令牌管理", async ({ page 
   await page.getByRole("button", { name: "配置", exact: true }).click();
   await page.getByRole("button", { name: "停用工具" }).click();
   await expect(page.getByRole("button", { name: "保存草稿" })).toBeEnabled();
-  const callArgs = page.getByLabel("调用参数（JSON）");
   await page.getByLabel("参数 1 映射方式").selectOption({ label: "客户端填写" });
-  await callArgs.fill('{"podIp":"10.60.144.183","showAllPods":true}');
+  await page.getByLabel("调试值 showAllPods").selectOption("true");
   await page.getByLabel("参数 2 映射方式").selectOption({ label: "固定值" });
   await page.getByLabel("参数 2 固定值").fill("10.60.144.184");
   await page.getByRole("button", { name: "保存草稿" }).click();
@@ -105,7 +104,7 @@ test("注册、配置、调试、发布、导出和令牌管理", async ({ page 
   await page.getByRole("button", { name: "发送请求" }).click();
   const response = await call;
   expect(response.ok(), await response.text()).toBe(true);
-  expect(JSON.parse(await callArgs.inputValue())).toEqual({ showAllPods: true });
+  await expect(page.getByLabel("调试值 podIp")).toHaveCount(0);
   await expect(page.locator(".call-result pre")).toContainText(
     '"podIp": "10.60.144.184"',
   );
@@ -248,22 +247,27 @@ test("请求体配置按需展开并保留已保存的模板", async ({ page }) 
   await method.selectOption("POST");
   await expect(body).not.toContainText("不支持请求体");
 
+  await expect(page.getByRole("textbox", {name: "调试值 itemId"})).toBeVisible();
+  await type.selectOption("number");
+  const numeric = page.getByRole("spinbutton", {name: "调试值 itemId"});
+  await expect(numeric).toHaveAttribute("step", "any");
   await type.selectOption({ label: "整数 · integer" });
   await expect(page.locator(".schema-preview")).toContainText('"type": "integer"');
   const save = page.getByRole("button", { name: "保存草稿" });
   const send = page.getByRole("button", { name: "发送请求" });
   await save.click();
   await expect(send).toBeEnabled();
-  await page.getByLabel("调用参数（JSON）").fill('{"itemId":42}');
+  await expect(numeric).toHaveAttribute("step", "1");
+  await numeric.fill("0");
   await send.click();
-  await expect(page.locator(".call-result pre")).toContainText('"itemId": 42');
+  await expect(page.locator(".call-result pre")).toContainText('"itemId": 0');
 
-  await body.getByText("请求体模板", { exact: true }).press("Enter");
+  await body.getByText("输入请求体", { exact: true }).press("Enter");
   await expect(template).toBeVisible();
   await expect(body.locator("code")).toHaveText('"{{itemId}}"');
   const json = '{"items":["{{itemId}}"]}';
   await template.fill(json);
-  await body.getByText("请求体模板", { exact: true }).click();
+  await body.getByText("输入请求体", { exact: true }).click();
   await expect(template).toBeHidden();
 
   await save.click();
@@ -271,7 +275,7 @@ test("请求体配置按需展开并保留已保存的模板", async ({ page }) 
   await page.getByRole("button", { name: "返回接口库" }).click();
   await page.getByRole("button", { name: "配置", exact: true }).click();
   await expect(template).toBeHidden();
-  await body.getByText("请求体模板", { exact: true }).click();
+  await body.getByText("输入请求体", { exact: true }).click();
   await expect(template).toHaveValue(json);
   await expect(type).toHaveValue("integer");
 
@@ -290,7 +294,7 @@ test("从嵌套请求体模板生成参数并调试", async ({ page }) => {
   await page.getByLabel("接口地址", { exact: true }).fill("http://127.0.0.1:8099/items");
   await page.getByLabel("请求方法").selectOption("POST");
   const body = page.getByRole("region", { name: "JSON 请求体", exact: true });
-  await body.getByText("请求体模板", { exact: true }).click();
+  await body.getByText("输入请求体", { exact: true }).click();
   const template = body.getByLabel("JSON 请求体模板", { exact: true });
   const extract = body.getByRole("button", { name: "从占位符生成参数" });
   await expect(extract).toBeDisabled();
@@ -308,9 +312,7 @@ test("从嵌套请求体模板生成参数并调试", async ({ page }) => {
   await template.fill(json);
   await extract.click();
   await expect(names).toHaveCount(2);
-  const draftArgs = page.getByLabel("调用参数（JSON）");
-  expect(JSON.parse(await draftArgs.inputValue())).toEqual({ hostIps: "", room: "" });
-  await draftArgs.fill('{"hostIps":"","room":"机房一"}');
+  await page.getByLabel("调试值 room").fill("机房一");
   await expect(names.first()).toHaveValue("hostIps");
   await expect(names.last()).toHaveValue("room");
   await expect(body.getByRole("columnheader", {name:"位置"})).toHaveCount(0);
@@ -318,7 +320,7 @@ test("从嵌套请求体模板生成参数并调试", async ({ page }) => {
   await page.getByLabel("参数 1 类型").selectOption("array");
   await extract.click();
   await expect(names).toHaveCount(2);
-  expect(JSON.parse(await draftArgs.inputValue())).toEqual({ hostIps: [], room: "机房一" });
+  await expect(page.getByLabel("调试值 room")).toHaveValue("机房一");
   await expect(page.getByLabel("参数 1 类型")).toHaveValue("array");
 
   await template.fill('{"newField":"{{zone}}","conflict":"{{HostIps}}"}');
@@ -331,10 +333,11 @@ test("从嵌套请求体模板生成参数并调试", async ({ page }) => {
   await page.getByRole("button", { name: "返回接口库" }).click();
   await page.getByRole("button", { name: "配置", exact: true }).click();
   await expect(page.getByLabel("参数 1 类型")).toHaveValue("array");
-  await body.getByText("请求体模板", { exact: true }).click();
+  await body.getByText("输入请求体", { exact: true }).click();
   await expect(template).toHaveValue(json);
 
-  await page.getByLabel("调用参数（JSON）").fill('{"hostIps":["192.0.2.1"],"room":"test-room"}');
+  await page.getByLabel("调试值 hostIps").fill("192.0.2.1");
+  await page.getByLabel("调试值 room").fill("test-room");
   await page.getByRole("button", { name: "发送请求" }).click();
   await expect(page.getByText("HTTP 200", { exact: true })).toBeVisible();
   await expect(page.locator(".call-result pre")).toContainText('"ipAddresses": [');
@@ -400,21 +403,20 @@ test("至少填写一个指定筛选参数才能调试", async ({ page }, testIn
   await page.getByRole("button", { name: "配置", exact: true }).click();
   await expect(ip).toBeChecked();
   await expect(admin).toBeChecked();
-  const args = page.getByLabel("调用参数（JSON）");
+  const limit = page.getByLabel("调试值 limit");
   const run = page.getByRole("button", { name: "发送请求" });
-  expect(JSON.parse(await args.inputValue())).toEqual({host_ip: [], admin: [], limit: 0});
-  await args.scrollIntoViewIfNeeded();
+  await expect(limit).toHaveValue("");
+  await limit.scrollIntoViewIfNeeded();
   await page.locator(".call-panel").screenshot({path: testInfo.outputPath("trial-arguments.png")});
-  const emptyFilter = '{"host_ip":[],"limit":10}';
-  await args.fill(emptyFilter);
+  await limit.fill("10");
   await run.click();
   await expect(page.getByRole("alert")).toHaveText(message);
-  await expect(args).toHaveValue(emptyFilter);
+  await expect(limit).toHaveValue("10");
   await expect(page.locator(".toast")).toHaveCount(0);
   await page.getByRole("heading", { name: /^参数映射/ }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath("editor-flow-desktop.png") });
 
-  await args.fill('{"admin":["owner"]}');
+  await page.getByLabel("调试值 admin").fill("owner");
   await run.click();
   await expect(page.getByText("HTTP 200", { exact: true })).toBeVisible();
   await expect(page.locator(".call-result pre")).toContainText('"owner"');

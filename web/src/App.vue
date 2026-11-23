@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { parseTree } from "jsonc-parser";
 import HelpHint from "./HelpHint.vue";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import type { AccessToken, CallResult, Definition, Parameter, Tool, User } from "./types";
@@ -30,7 +29,6 @@ const saving = ref(false);
 const publishing = ref(false);
 const sharing = ref(false);
 const calling = ref(false);
-const callArgs = ref("{}");
 const trialPanel = ref<HTMLElement | null>(null);
 const result = ref<CallResult | null>(null);
 const callError = ref("");
@@ -254,9 +252,8 @@ function openEditor(definition: Definition, id: number | null = null) {
   callError.value = "";
   selectedOutputPaths.value = [];
   outputResult.value = null;
-  syncedFields = [];
-  callArgs.value = "{}";
-  syncCallArgs();
+  trialRows.value = [];
+  syncTrialRows();
 }
 
 function newTool(example = false) {
@@ -393,64 +390,52 @@ function extractBodyParameters() {
   }
 }
 
-interface TrialField {
-  name: string;
-  type: Parameter["type"] | "json";
-  parameter?: Parameter;
-  defaultValue: unknown;
+const trialFields = computed(() => (editor.value?.parameters ?? [])
+  .filter(p => !p.fixed && p.name.trim())
+  .map(parameter => ({ parameter, name: parameter.name, type: parameter.type })));
+const trialRows = ref<Array<{ parameter: Parameter; name: string; type: Parameter["type"]; value: string }>>([]);
+
+function syncTrialRows() {
+  const previous = trialRows.value;
+  trialRows.value = trialFields.value.map(field => {
+    const old = previous.find(row => row.parameter === field.parameter)
+      ?? previous.find(row => row.name === field.name);
+    const sample = field.name === "podIp" && field.type === "string" ? "10.60.144.183" : "";
+    return { ...field, value: old?.type === field.type ? old.value : sample };
+  });
 }
+watch(trialFields, syncTrialRows);
 
-const trialFields = computed(() => {
-  const fields: TrialField[] = [];
-  for (const p of editor.value?.parameters ?? []) {
-    if (p.fixed || !p.name.trim()) continue;
-    const defaults = { string: p.name === "podIp" ? "10.60.144.183" : "", array: [], object: {},
-      boolean: p.queryFilter ? null : false, integer: p.queryFilter ? null : 0, number: p.queryFilter ? null : 0 };
-    fields.push({ name: p.name, type: p.type, parameter: p, defaultValue: defaults[p.type] });
-  }
-  return fields;
-});
-
-let syncedFields: TrialField[] = [];
-function syncCallArgs() {
-  const fields = trialFields.value;
-  if (syncedFields === fields) return;
-  const text = callArgs.value;
-  try {
-    JSON.parse(text);
-  } catch {
-    return; // 等用户完成正在编辑的 JSON。
-  }
-  const root = parseTree(text);
-  if (root?.type !== "object") return;
-  const values = new Map<string, string>();
-  for (const property of root.children ?? []) {
-    const [key, value] = property.children!;
-    values.set(key.value, text.slice(value.offset, value.offset + value.length));
-  }
-  const next = new Map(values);
-  const names = new Set(fields.map(field => field.name));
-  for (const old of syncedFields) {
-    if (!names.has(old.name)) next.delete(old.name);
-  }
-  for (const field of fields) {
-    const old = syncedFields.find(f => field.parameter && f.parameter === field.parameter)
-      ?? syncedFields.find(f => f.name === field.name);
-    if (!old || old.type !== field.type) {
-      if (old || !values.has(field.name)) next.set(field.name, JSON.stringify(field.defaultValue));
-    } else if (old.name !== field.name && values.has(old.name)) {
-      next.set(field.name, values.get(old.name)!);
+function trialArguments() {
+  const entries: string[] = [];
+  for (const {name, type, value, parameter} of trialRows.value) {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      if (parameter.required) throw new Error(`请填写必填参数：${name}`);
+      continue;
     }
+    let json = trimmed;
+    if (type === "string") json = JSON.stringify(value);
+    else if (type === "integer" || type === "number") {
+      const number = Number(trimmed);
+      if (!Number.isFinite(number) || (type === "integer" && !Number.isSafeInteger(number)))
+        throw new Error(`参数 ${name} 应为${parameterTypes[type]}`);
+      json = JSON.stringify(number);
+    } else if (type === "array" && !trimmed.startsWith("[")) {
+      json = JSON.stringify(trimmed.split(/\r?\n/).map(line => line.trim()).filter(Boolean));
+    } else {
+      let parsed;
+      try { parsed = JSON.parse(json); }
+      catch { throw new Error(`参数 ${name} 的${parameterTypes[type]}格式无效`); }
+      const valid = type === "array" ? Array.isArray(parsed)
+        : type === "object" ? parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+        : typeof parsed === "boolean";
+      if (!valid) throw new Error(`参数 ${name} 应为${parameterTypes[type]}`);
+    }
+    entries.push(`${JSON.stringify(name)}:${json}`);
   }
-  for (const p of editor.value?.parameters ?? []) {
-    if (p.fixed) next.delete(p.name);
-  }
-  syncedFields = fields;
-  if (next.size === values.size && [...next].every(([key, value]) => values.get(key) === value)) return;
-  const lines = [...next].map(([name, value]) => `  ${JSON.stringify(name)}: ${value}`);
-  callArgs.value = lines.length ? `{\n${lines.join(",\n")}\n}` : "{}";
+  return `{${entries.join(",")}}`;
 }
-watch([trialFields, callArgs], syncCallArgs);
 
 async function save() {
   if (!editor.value) return;
@@ -530,6 +515,11 @@ function focusTrial() {
 }
 
 async function runCall() {
+  const invalid = trialPanel.value?.querySelector<HTMLInputElement>('input[type="number"]:invalid');
+  if (invalid) {
+    invalid.reportValidity();
+    return;
+  }
   calling.value = true;
   result.value = null;
   callError.value = "";
@@ -537,12 +527,9 @@ async function runCall() {
   outputResult.value = null;
   const id = selectedId.value;
   try {
-    const args: unknown = JSON.parse(callArgs.value);
-    if (args === null || typeof args !== "object" || Array.isArray(args))
-      throw new Error("调用参数必须是 JSON 对象");
     const response = await api<CallResult>(`/tools/${id}/call`, {
       method: "POST",
-      body: JSON.stringify({ arguments: args, raw: !sharedTool.value }),
+      body: `{"arguments":${trialArguments()},"raw":${!sharedTool.value}}`,
     });
     if (selectedId.value !== id) return;
     result.value = response;
@@ -1081,7 +1068,7 @@ onUnmounted(() => {
                         {{ editor.method }} 不支持请求体。请调整请求方法或移除请求体配置。
                       </p>
                       <details v-if="!published || editor.bodyTemplate" class="body-template">
-                        <summary>请求体模板</summary>
+                        <summary>输入请求体</summary>
                         <label for="body-template" class="sr-only">JSON 请求体模板</label>
                         <textarea
                           id="body-template"
@@ -1314,7 +1301,7 @@ onUnmounted(() => {
               <div class="panel-heading">
                 <div class="group-title">
                   <h2 id="trial-title">调试</h2>
-                  <HelpHint label="调用参数说明" text="调用参数（JSON）根据参数配置自动生成。填写值后发送请求，将调用真实上游接口。" />
+                  <HelpHint label="调用参数说明" text="填写参数值后发送请求。留空的选填项会省略，固定值由系统填入。" />
                 </div>
                 <button
                   class="button primary"
@@ -1325,13 +1312,29 @@ onUnmounted(() => {
                 </button>
               </div>
               <div class="form-content">
-                <textarea
-                    aria-label="调用参数（JSON）"
-                    v-model="callArgs"
-                    class="code-input"
-                    rows="5"
-                    spellcheck="false"
-                  />
+                <table v-if="trialRows.length" class="trial-table">
+                  <thead><tr><th scope="col">参数</th><th scope="col">调试值</th></tr></thead>
+                  <tbody>
+                    <tr v-for="row in trialRows" :key="row.name">
+                      <th scope="row">{{ row.name }}<small>{{ parameterTypes[row.type] }}{{ row.parameter.required ? " · 必填" : "" }}</small></th>
+                      <td>
+                        <select v-if="row.type === 'boolean'" v-model="row.value" :aria-label="`调试值 ${row.name}`">
+                          <option value="">请选择</option><option value="true">true</option><option value="false">false</option>
+                        </select>
+                        <textarea v-else-if="row.type === 'array' || row.type === 'object'" v-model="row.value"
+                          :aria-label="`调试值 ${row.name}`" rows="2" spellcheck="false"
+                          :placeholder="row.type === 'array' ? '每行一个值，或粘贴 JSON 数组' : '输入 JSON 对象'" />
+                        <input v-else-if="row.type === 'integer' || row.type === 'number'"
+                          type="number" :step="row.type === 'integer' ? 1 : 'any'"
+                          :value="row.value" @input="row.value = ($event.target as HTMLInputElement).value"
+                          :aria-label="`调试值 ${row.name}`" :placeholder="`输入${parameterTypes[row.type]}`" />
+                        <input v-else v-model="row.value" :aria-label="`调试值 ${row.name}`"
+                          :placeholder="`输入${parameterTypes[row.type]}`" />
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p v-else>此接口无需填写调试参数。</p>
                 <p v-if="selectedId === null || dirty" class="field-help">
                   保存草稿后可发送请求。
                 </p>

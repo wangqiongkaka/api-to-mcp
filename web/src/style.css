@@ -1638,3 +1638,10 @@ tbody tr:last-child td {
     scroll-behavior: auto !important;
   }
 }
+
+.trial-table { table-layout: fixed; }
+.trial-table th, .trial-table td { padding: 8px; }
+.trial-table th:first-child { width: 32%; }
+.trial-table tbody th { white-space: normal; overflow-wrap: anywhere; background: transparent; color: var(--text); }
+.trial-table small { display: block; color: var(--muted); font-weight: 400; }
+.trial-table textarea { display: block; resize: vertical; }
