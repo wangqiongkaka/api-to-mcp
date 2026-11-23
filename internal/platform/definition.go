@@ -89,8 +89,8 @@ func (d Definition) Validate() error {
 		default:
 			return fmt.Errorf("参数类型无效：%s", p.Name)
 		}
-		if p.NonEmpty && (p.Type != "array" || p.Fixed) {
-			return fmt.Errorf("仅客户端填写的数组参数可设置至少一项：%s", p.Name)
+		if p.NonEmpty && p.Fixed {
+			return fmt.Errorf("仅客户端填写的参数可设置非空：%s", p.Name)
 		}
 		if p.QueryFilter && p.Fixed {
 			return fmt.Errorf("仅客户端填写的参数可设为筛选参数：%s", p.Name)
@@ -212,6 +212,14 @@ func (p Parameter) schema() map[string]any {
 	if p.Type == "integer" {
 		schema["minimum"] = -9007199254740991
 		schema["maximum"] = 9007199254740991
+	}
+	if p.NonEmpty {
+		switch p.Type {
+		case "string":
+			schema["pattern"] = `\S`
+		case "object":
+			schema["minProperties"] = 1
+		}
 	}
 	if p.Type == "array" {
 		items := map[string]any{}
@@ -335,6 +343,7 @@ func (d Definition) BuildRequest(args map[string]any) (*http.Request, error) {
 			return nil, fmt.Errorf("不允许传入未知或固定参数：%s", name)
 		}
 	}
+	filters := d.queryFilterNames()
 	address := d.URL
 	query, headers, body := url.Values{}, http.Header{}, map[string]any{}
 	for _, p := range d.Parameters {
@@ -349,7 +358,9 @@ func (d Definition) BuildRequest(args map[string]any) (*http.Request, error) {
 				return nil, fmt.Errorf("参数 %s 的类型应为 %s", p.Name, p.Type)
 			}
 			optionalFilter := p.QueryFilter && !p.Required
-			if optionalFilter && !hasQueryFilterValue(value, "") {
+			array, isArray := value.([]any)
+			emptyOptionalArray := len(filters) > 0 && !p.Required && isArray && len(array) == 0
+			if emptyOptionalArray || (optionalFilter && !hasQueryFilterValue(value, "")) {
 				exists = false
 			} else if field := p.ItemArrayField; field != "" {
 				for i, item := range value.([]any) {
@@ -361,8 +372,21 @@ func (d Definition) BuildRequest(args map[string]any) (*http.Request, error) {
 				}
 				exists = !optionalFilter || hasQueryFilterValue(value, field)
 			}
-			if exists && p.NonEmpty && len(value.([]any)) == 0 {
-				return nil, fmt.Errorf("参数 %s 至少需要一项", p.Name)
+			if exists && p.NonEmpty {
+				switch v := value.(type) {
+				case string:
+					if strings.TrimSpace(v) == "" {
+						return nil, fmt.Errorf("参数 %s 不能为空白", p.Name)
+					}
+				case map[string]any:
+					if len(v) == 0 {
+						return nil, fmt.Errorf("参数 %s 至少需要一个属性", p.Name)
+					}
+				case []any:
+					if len(v) == 0 {
+						return nil, fmt.Errorf("参数 %s 至少需要一项", p.Name)
+					}
+				}
 			}
 		}
 		if !p.Fixed && !exists {
@@ -419,7 +443,7 @@ func (d Definition) BuildRequest(args map[string]any) (*http.Request, error) {
 	} else if len(body) > 0 {
 		data, _ = json.Marshal(body)
 	}
-	if filters := d.queryFilterNames(); len(filters) > 0 && !slices.ContainsFunc(filters, func(name string) bool {
+	if len(filters) > 0 && !slices.ContainsFunc(filters, func(name string) bool {
 		p := dynamic[name]
 		return (d.BodyTemplate == "" || p.In != "body" || slices.Contains(renderedParameters, name)) &&
 			hasQueryFilterValue(args[name], p.ItemArrayField)

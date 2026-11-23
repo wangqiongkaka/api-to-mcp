@@ -111,6 +111,8 @@ const schema = computed(() => {
       ...(p.type === "array"
         ? { items, ...(p.nonEmpty ? { minItems: 1 } : {}) }
         : {}),
+      ...(p.nonEmpty && p.type === "string" ? { pattern: "\\S" } : {}),
+      ...(p.nonEmpty && p.type === "object" ? { minProperties: 1 } : {}),
       ...(p.type === "integer"
         ? { minimum: -9007199254740991, maximum: 9007199254740991 }
         : {}),
@@ -1083,6 +1085,8 @@ onUnmounted(() => {
                         <th scope="col">位置</th>
                         <th scope="col">类型</th>
                         <th scope="col">映射方式 / 固定值</th>
+                        <th scope="col" class="checkbox-cell">筛选参数</th>
+                        <th scope="col" class="checkbox-cell">非空</th>
                         <th scope="col" class="checkbox-cell">必填</th>
                         <th scope="col" aria-label="操作"></th>
                       </tr>
@@ -1118,7 +1122,7 @@ onUnmounted(() => {
                             v-model="p.type"
                             class="parameter-type"
                             :aria-label="`参数 ${index + 1} 类型`"
-                            @change="if (p.type !== 'array') { p.nonEmpty = false; p.itemArrayField = ''; }"
+                            @change="if (p.type !== 'array') { p.itemArrayField = ''; }"
                           >
                             <option
                               v-for="(label, type) in parameterTypes"
@@ -1132,15 +1136,7 @@ onUnmounted(() => {
                             v-if="p.type === 'array' && !p.fixed"
                             class="array-options"
                           >
-                            <summary>{{ p.nonEmpty || p.itemArrayField ? "数组约束 · 已设置" : "数组约束" }}</summary>
-                            <label class="parameter-constraint">
-                              <input
-                                v-model="p.nonEmpty"
-                                type="checkbox"
-                                :aria-label="`参数 ${index + 1} 数组不为空`"
-                              />
-                              数组不为空
-                            </label>
+                            <summary>{{ p.itemArrayField ? "数组约束 · 已设置" : "数组约束" }}</summary>
                             <label class="array-item-field">
                               元素内数组字段
                               <input
@@ -1174,15 +1170,23 @@ onUnmounted(() => {
                             placeholder="输入固定值"
                             autocomplete="off"
                           />
-                          <label v-else class="parameter-constraint query-filter">
-                            <input
-                              v-model="p.queryFilter"
-                              type="checkbox"
-                              :aria-label="`参数 ${index + 1} 筛选参数`"
-                              aria-describedby="query-filter-rule"
-                            />
-                            筛选参数
-                          </label>
+                        </td>
+                        <td class="checkbox-cell">
+                          <input
+                            v-model="p.queryFilter"
+                            type="checkbox"
+                            :disabled="p.fixed"
+                            :aria-label="`参数 ${index + 1} 筛选参数`"
+                            aria-describedby="query-filter-rule"
+                          />
+                        </td>
+                        <td class="checkbox-cell">
+                          <input
+                            v-model="p.nonEmpty"
+                            type="checkbox"
+                            :disabled="p.fixed"
+                            :aria-label="`参数 ${index + 1} 非空`"
+                          />
                         </td>
                         <td class="checkbox-cell">
                           <input

@@ -884,7 +884,7 @@ tbody tr:last-child td {
   min-height: 36px;
 }
 .parameter-table {
-  min-width: 660px;
+  min-width: 760px;
 }
 .parameter-table th {
   padding: 9px 8px;
@@ -949,6 +949,7 @@ tbody tr:last-child td {
   text-overflow: clip;
 }
 .parameter-table .checkbox-cell {
+  white-space: nowrap;
   text-align: center;
 }
 .parameter-table td.checkbox-cell {
@@ -971,21 +972,6 @@ tbody tr:last-child td {
 }
 .array-options[open] > label {
   margin-top: 6px;
-}
-.parameter-constraint {
-  flex-direction: row;
-  align-items: center;
-  gap: 6px;
-  min-height: 26px;
-  font-size: 12px;
-}
-.parameter-constraint input {
-  flex: none;
-  margin: 0;
-}
-.query-filter {
-  margin-top: 7px;
-  white-space: nowrap;
 }
 .array-item-field {
   gap: 4px;

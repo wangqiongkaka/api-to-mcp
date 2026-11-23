@@ -110,6 +110,39 @@ func TestBuildRequestRequiresQueryFilter(t *testing.T) {
 	}
 }
 
+func TestOptionalArrayWithSingleQueryFilter(t *testing.T) {
+	d := sampleDefinition()
+	d.Method = "POST"
+	d.Parameters = []Parameter{
+		{Name: "host_ip", In: "body", Type: "array", QueryFilter: true},
+		{Name: "admin", In: "body", Type: "array"},
+	}
+	for _, tc := range []struct{ template, want string }{
+		{"", `{"host_ip":["10.12.71.2"]}`},
+		{`{"filters":[{"ip":"{{host_ip}}"},{"owner":"{{admin}}"}]}`, `{"filters":[{"ip":["10.12.71.2"]}]}`},
+	} {
+		d.BodyTemplate = tc.template
+		for _, input := range []string{`{"host_ip":["10.12.71.2"],"admin":[]}`, `{"host_ip":["10.12.71.2"]}`} {
+			args, err := d.decodeArguments([]byte(input))
+			if err != nil {
+				t.Fatal(err)
+			}
+			r, err := d.BuildRequest(args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := io.ReadAll(r.Body)
+			r.Body.Close()
+			if err != nil || string(body) != tc.want {
+				t.Fatalf("输入 %s 得到 %s，期望 %s，错误 %v", input, body, tc.want, err)
+			}
+		}
+		if r, err := d.BuildRequest(map[string]any{"admin": []any{"owner"}}); r != nil || err == nil || err.Error() != "请至少填写一个筛选参数：host_ip" {
+			t.Fatalf("只有未勾选参数时应拦截，得到 %v，%v", r, err)
+		}
+	}
+}
+
 func TestPathHeaderAndBody(t *testing.T) {
 	d := Definition{Name: "updateUser", Description: "更新用户", Method: "PATCH", URL: "https://example.com/users/{id}", TimeoutSeconds: 5, Parameters: []Parameter{
 		{Name: "id", In: "path", Type: "string", Required: true},
@@ -130,6 +163,31 @@ func TestPathHeaderAndBody(t *testing.T) {
 	}
 	if _, err = d.BuildRequest(map[string]any{"id": "..", "profile": map[string]any{}}); err == nil {
 		t.Fatal("接受了目录跳转参数")
+	}
+}
+
+func TestNonEmptyParameterTypes(t *testing.T) {
+	for _, tc := range []struct {
+		kind         string
+		valid, empty any
+	}{
+		{"string", "abc", "  "}, {"array", []any{0}, []any{}},
+		{"object", map[string]any{"value": false}, map[string]any{}},
+		{"integer", float64(0), nil}, {"number", float64(0), nil}, {"boolean", false, nil},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			d := sampleDefinition()
+			d.Method = "POST"
+			d.Parameters = []Parameter{{Name: "value", In: "body", Type: tc.kind, NonEmpty: true}}
+			for _, args := range []map[string]any{nil, {"value": tc.valid}} {
+				if _, err := d.BuildRequest(args); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := d.BuildRequest(map[string]any{"value": tc.empty}); err == nil {
+				t.Fatal("接受了空值")
+			}
+		})
 	}
 }
 
