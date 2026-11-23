@@ -968,6 +968,28 @@ tbody tr:last-child td {
   font-size: 12px;
   border-top: 1px solid #edf0f5;
 }
+.parameter-branch > summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin: 0;
+  padding: 10px 20px;
+  background: #edf1f8;
+  font-size: 14px;
+}
+.parameter-group .parameter-table td:first-child {
+  position: relative;
+  padding-left: 32px;
+}
+.parameter-group .parameter-table td:first-child::before {
+  content: "";
+  position: absolute;
+  left: 18px;
+  top: 0;
+  height: 30px;
+  width: 8px;
+  border: solid #c4cede;
+  border-width: 0 0 1px 1px;
+}
 .mapped-body {
   border-top: 1px solid var(--border);
   border-radius: 0 0 11px 11px;

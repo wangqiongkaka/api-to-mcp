@@ -57,6 +57,16 @@ const bodyTemplateParameters = computed(() =>
 const canSendBody = computed(
   () => editor.value?.method !== "GET" && editor.value?.method !== "HEAD",
 );
+const parameterGroups = computed(() => {
+  const definition = editor.value;
+  if (!definition) return [];
+  const rows = definition.parameters.map((p, index) => ({ p, index }));
+  return [
+    { key: "body", label: "JSON 请求体", rows: rows.filter(({ p }) => p.in === "body") },
+    { key: "other", label: "其他请求参数", rows: rows.filter(({ p }) => p.in !== "body") },
+  ].filter(group => group.rows.length || (group.key === "body" && !definition.wholeBody &&
+    ((canSendBody.value && !published.value) || definition.bodyTemplate)));
+});
 const successfulResponse = computed(
   () => result.value && result.value.statusCode >= 200 && result.value.statusCode < 300,
 );
@@ -1069,161 +1079,162 @@ onUnmounted(() => {
                 <div v-if="!editor.parameters.length" class="parameter-empty">
                   暂无参数。
                 </div>
-                <div v-else class="table-wrap parameter-wrap">
-                  <table class="parameter-table">
-                    <thead>
-                      <tr>
-                        <th scope="col">参数名称 / 描述</th>
-                        <th scope="col">位置</th>
-                        <th scope="col">类型</th>
-                        <th scope="col">映射方式 / 固定值</th>
-                        <th scope="col" class="checkbox-cell">筛选参数</th>
-                        <th scope="col" class="checkbox-cell">非空</th>
-                        <th scope="col" class="checkbox-cell">必填</th>
-                        <th scope="col" aria-label="操作"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="(p, index) in editor.parameters" :key="index">
-                        <td>
-                          <input
-                            v-model="p.name"
-                            required
-                            :aria-label="`参数 ${index + 1} 名称`"
-                            placeholder="参数名称"
-                          /><input
-                            v-model="p.description"
-                            class="parameter-secondary-input"
-                            :aria-label="`参数 ${index + 1} 描述`"
-                            placeholder="参数描述（选填）"
-                          />
-                        </td>
-                        <td>
-                          <select
-                            v-model="p.in"
-                            :aria-label="`参数 ${index + 1} 位置`"
-                          >
-                            <option value="query">查询参数</option>
-                            <option value="path">路径参数</option>
-                            <option value="header">请求头</option>
-                            <option value="body" :disabled="editor.wholeBody">请求体</option>
-                          </select>
-                        </td>
-                        <td>
-                          <select
-                            v-model="p.type"
-                            class="parameter-type"
-                            :aria-label="`参数 ${index + 1} 类型`"
+                <section v-for="group in parameterGroups" :key="group.key"
+                  class="parameter-group" :aria-label="group.label">
+                  <details class="parameter-branch" open>
+                    <summary>{{ group.label }}</summary>
+                    <div v-if="group.rows.length" class="table-wrap parameter-wrap">
+                      <table class="parameter-table">
+                        <thead>
+                          <tr>
+                            <th scope="col">参数名称 / 描述</th>
+                            <th scope="col">位置</th>
+                            <th scope="col">类型</th>
+                            <th scope="col">映射方式 / 固定值</th>
+                            <th scope="col" class="checkbox-cell">筛选参数</th>
+                            <th scope="col" class="checkbox-cell">非空</th>
+                            <th scope="col" class="checkbox-cell">必填</th>
+                            <th scope="col" aria-label="操作"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="{ p, index } in group.rows" :key="index">
+                            <td>
+                              <input
+                                v-model="p.name"
+                                required
+                                :aria-label="`参数 ${index + 1} 名称`"
+                                placeholder="参数名称"
+                              /><input
+                                v-model="p.description"
+                                class="parameter-secondary-input"
+                                :aria-label="`参数 ${index + 1} 描述`"
+                                placeholder="参数描述（选填）"
+                              />
+                            </td>
+                            <td>
+                              <select
+                                v-model="p.in"
+                                :aria-label="`参数 ${index + 1} 位置`"
+                              >
+                                <option value="query">查询参数</option>
+                                <option value="path">路径参数</option>
+                                <option value="header">请求头</option>
+                                <option value="body" :disabled="editor.wholeBody">请求体</option>
+                              </select>
+                            </td>
+                            <td>
+                              <select
+                                v-model="p.type"
+                                class="parameter-type"
+                                :aria-label="`参数 ${index + 1} 类型`"
 
-                          >
-                            <option
-                              v-for="(label, type) in parameterTypes"
-                              :key="type"
-                              :value="type"
-                            >
-                              {{ label }} · {{ type }}
-                            </option>
-                          </select>
-                        </td>
-                        <td>
-                          <select
-                            v-model="p.fixed"
-                            :aria-label="`参数 ${index + 1} 映射方式`"
-                            @change="if (p.fixed) { p.queryFilter = false; p.nonEmpty = false; }"
-                          >
-                            <option :value="false">客户端填写</option>
-                            <option :value="true">固定值</option></select
-                          ><input
-                            v-if="p.fixed"
-                            v-model="p.value"
-                            class="parameter-secondary-input"
-                            :type="p.in === 'header' ? 'password' : 'text'"
-                            :aria-label="`参数 ${index + 1} 固定值`"
-                            placeholder="输入固定值"
-                            autocomplete="off"
+                              >
+                                <option
+                                  v-for="(label, type) in parameterTypes"
+                                  :key="type"
+                                  :value="type"
+                                >
+                                  {{ label }} · {{ type }}
+                                </option>
+                              </select>
+                            </td>
+                            <td>
+                              <select
+                                v-model="p.fixed"
+                                :aria-label="`参数 ${index + 1} 映射方式`"
+                                @change="if (p.fixed) { p.queryFilter = false; p.nonEmpty = false; }"
+                              >
+                                <option :value="false">客户端填写</option>
+                                <option :value="true">固定值</option></select
+                              ><input
+                                v-if="p.fixed"
+                                v-model="p.value"
+                                class="parameter-secondary-input"
+                                :type="p.in === 'header' ? 'password' : 'text'"
+                                :aria-label="`参数 ${index + 1} 固定值`"
+                                placeholder="输入固定值"
+                                autocomplete="off"
+                              />
+                            </td>
+                            <td class="checkbox-cell">
+                              <input
+                                v-model="p.queryFilter"
+                                type="checkbox"
+                                :disabled="p.fixed"
+                                :aria-label="`参数 ${index + 1} 筛选参数`"
+                                aria-describedby="query-filter-rule"
+                              />
+                            </td>
+                            <td class="checkbox-cell">
+                              <input
+                                v-model="p.nonEmpty"
+                                type="checkbox"
+                                :disabled="p.fixed"
+                                :aria-label="`参数 ${index + 1} 非空`"
+                              />
+                            </td>
+                            <td class="checkbox-cell">
+                              <input
+                                v-model="p.required"
+                                type="checkbox"
+                                :disabled="p.fixed"
+                                :aria-label="`参数 ${index + 1} 必填`"
+                              />
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                class="icon-button danger-text"
+                                :aria-label="`删除参数 ${index + 1}`"
+                                @click="editor.parameters.splice(index, 1)"
+                              >
+                                ×
+                              </button>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <div v-if="group.key === 'body'" class="mapped-body">
+                      <p v-if="!canSendBody" class="body-method-warning">
+                        {{ editor.method }} 不支持请求体。请调整请求方法或参数位置。
+                      </p>
+                      <details v-if="!published || editor.bodyTemplate" class="body-template">
+                        <summary>{{ editor.bodyTemplate ? "嵌套 JSON 模板（已填写）" : "配置嵌套 JSON 模板" }}</summary>
+                        <label for="body-template" class="sr-only">JSON 请求体模板</label>
+                        <textarea
+                          id="body-template"
+                          v-model.trim="editor.bodyTemplate"
+                          rows="4"
+                          maxlength="32768"
+                          spellcheck="false"
+                          class="code-input"
+                          aria-describedby="body-template-help"
+                          placeholder='{"items":["{{value}}"]}'
+                          @input="bodyExtractionError = ''"
+                        />
+                        <button
+                          v-if="canSendBody && !published"
+                          type="button"
+                          class="button small"
+                          :disabled="!editor.bodyTemplate"
+                          @click="extractBodyParameters"
+                        >从占位符生成参数</button>
+                        <div v-if="bodyExtractionError" class="alert error" role="alert">{{ bodyExtractionError }}</div>
+                        <p id="body-template-help">
+                          占位符须加双引号。未填写的选填数组会省略对应条件或字段；其他参数须必填或固定。
+                        </p>
+                        <p v-if="bodyTemplateParameters.length" class="body-template-tokens">
+                          <span>参数占位符</span>
+                          <code
+                            v-for="(p, index) in bodyTemplateParameters"
+                            :key="index"
+                            v-text="JSON.stringify(`{{${p.name}}}`)"
                           />
-                        </td>
-                        <td class="checkbox-cell">
-                          <input
-                            v-model="p.queryFilter"
-                            type="checkbox"
-                            :disabled="p.fixed"
-                            :aria-label="`参数 ${index + 1} 筛选参数`"
-                            aria-describedby="query-filter-rule"
-                          />
-                        </td>
-                        <td class="checkbox-cell">
-                          <input
-                            v-model="p.nonEmpty"
-                            type="checkbox"
-                            :disabled="p.fixed"
-                            :aria-label="`参数 ${index + 1} 非空`"
-                          />
-                        </td>
-                        <td class="checkbox-cell">
-                          <input
-                            v-model="p.required"
-                            type="checkbox"
-                            :disabled="p.fixed"
-                            :aria-label="`参数 ${index + 1} 必填`"
-                          />
-                        </td>
-                        <td>
-                          <button
-                            type="button"
-                            class="icon-button danger-text"
-                            :aria-label="`删除参数 ${index + 1}`"
-                            @click="editor.parameters.splice(index, 1)"
-                          >
-                            ×
-                          </button>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-                <section
-                  v-if="!editor.wholeBody && ((canSendBody && !published) || bodyParameters.length || editor.bodyTemplate)"
-                  class="mapped-body"
-                  aria-labelledby="mapped-body-title"
-                >
-                  <h2 id="mapped-body-title">JSON 请求体</h2>
-                  <p v-if="!canSendBody" class="body-method-warning">
-                    {{ editor.method }} 不支持请求体。请调整请求方法或参数位置。
-                  </p>
-                  <details v-if="!published || editor.bodyTemplate" class="body-template">
-                    <summary>{{ editor.bodyTemplate ? "嵌套 JSON 模板（已填写）" : "配置嵌套 JSON 模板" }}</summary>
-                    <label for="body-template" class="sr-only">JSON 请求体模板</label>
-                    <textarea
-                      id="body-template"
-                      v-model.trim="editor.bodyTemplate"
-                      rows="4"
-                      maxlength="32768"
-                      spellcheck="false"
-                      class="code-input"
-                      aria-describedby="body-template-help"
-                      placeholder='{"items":["{{value}}"]}'
-                      @input="bodyExtractionError = ''"
-                    />
-                    <button
-                      v-if="canSendBody && !published"
-                      type="button"
-                      class="button small"
-                      :disabled="!editor.bodyTemplate"
-                      @click="extractBodyParameters"
-                    >从占位符生成参数</button>
-                    <div v-if="bodyExtractionError" class="alert error" role="alert">{{ bodyExtractionError }}</div>
-                    <p id="body-template-help">
-                      占位符须加双引号。未填写的选填数组会省略对应条件或字段；其他参数须必填或固定。
-                    </p>
-                    <p v-if="bodyTemplateParameters.length" class="body-template-tokens">
-                      <span>参数占位符</span>
-                      <code
-                        v-for="(p, index) in bodyTemplateParameters"
-                        :key="index"
-                        v-text="JSON.stringify(`{{${p.name}}}`)"
-                      />
-                    </p>
+                        </p>
+                      </details>
+                    </div>
                   </details>
                 </section>
                 <section aria-labelledby="output-fields-title">

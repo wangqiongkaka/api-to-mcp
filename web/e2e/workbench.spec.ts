@@ -362,7 +362,13 @@ test("至少填写一个指定筛选参数才能试调用", async ({ page }, tes
   await page.getByRole("button", { name: "配置", exact: true }).click();
   const ip = page.getByLabel("参数 1 筛选参数");
   const admin = page.getByLabel("参数 2 筛选参数");
-  await expect(page.getByRole("columnheader", { name: "筛选参数" })).toBeVisible();
+  const bodyGroup = page.getByRole("region", { name: "JSON 请求体", exact: true });
+  await expect(bodyGroup.getByRole("columnheader", { name: "筛选参数" })).toBeVisible();
+  const branch = bodyGroup.locator(".parameter-branch > summary");
+  await branch.click();
+  await expect(ip).toBeHidden();
+  await branch.click();
+  await expect(ip).toBeVisible();
   const nonEmpty = page.getByLabel("参数 1 非空");
   await nonEmpty.check();
   await expect(page.locator(".schema-preview")).toContainText("minItems");
@@ -400,8 +406,9 @@ test("至少填写一个指定筛选参数才能试调用", async ({ page }, tes
   await expect(page.locator(".call-result pre")).toContainText('"owner"');
   await expect(page.locator(".call-result pre")).not.toContainText('"ip"');
   await page.setViewportSize({ width: 393, height: 852 });
-  const mappings = page.locator(".parameter-wrap");
+  const mappings = page.getByRole("region", { name: "JSON 请求体", exact: true }).locator(".parameter-wrap");
   await mappings.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath("parameter-group-mobile.png") });
   await mappings.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
   await expect(ip).toBeInViewport();
   await expect(admin).toBeInViewport();
