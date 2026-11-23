@@ -45,7 +45,7 @@ func TestBuildRequestRequiresQueryFilter(t *testing.T) {
 	d := sampleDefinition()
 	d.Method = "POST"
 	d.Parameters = []Parameter{
-		{Name: "host_ip", In: "body", Type: "array", QueryFilter: true},
+		{Name: "host_ip", In: "body", Type: "array", QueryFilter: true, NonEmpty: true},
 		{Name: "admin", In: "body", Type: "array", QueryFilter: true, ItemArrayField: "value"},
 		{Name: "limit", In: "query", Type: "integer"},
 		{Name: "auth", In: "header", Type: "string", Fixed: true, Value: "secret"},
@@ -55,32 +55,48 @@ func TestBuildRequestRequiresQueryFilter(t *testing.T) {
 	const message = "请至少填写一个筛选参数：host_ip、admin、active"
 	for _, tc := range []struct {
 		args string
-		pass bool
+		body string
 	}{
-		{`{}`, false},
-		{`{"limit":1}`, false},
-		{`{"host_ip":[],"limit":1}`, false},
-		{`{"host_ip":[null," ",[]]}`, false},
-		{`{"admin":[{"field":"name","value":[" "]}]}`, false},
-		{`{"host_ip":["192.0.2.1"]}`, true},
-		{`{"host_ip":[],"admin":[{"value":["owner"]}]}`, true},
-		{`{"host_ip":["192.0.2.1"],"admin":[{"value":["owner"]}]}`, true},
-		{`{"active":false}`, true},
+		{`{}`, ""},
+		{`{"limit":1}`, ""},
+		{`{"host_ip":[],"limit":1}`, ""},
+		{`{"host_ip":[""],"admin":[" "]}`, ""},
+		{`{"host_ip":[null," ",[]]}`, ""},
+		{`{"admin":[{"field":"name","value":[" "]}]}`, ""},
+		{`{"host_ip":["192.0.2.1"]}`, `{"filters":[{"ip":["192.0.2.1"]}]}`},
+		{`{"host_ip":["192.0.2.1"],"admin":[""]}`, `{"filters":[{"ip":["192.0.2.1"]}]}`},
+		{`{"host_ip":["192.0.2.1"],"admin":[{"field":"name","value":[" "]}]}`, `{"filters":[{"ip":["192.0.2.1"]}]}`},
+		{`{"host_ip":[],"admin":[{"value":["owner"]}]}`, `{"filters":[{"byAdmin":[{"value":["owner"]}]}]}`},
+		{`{"host_ip":[""],"admin":[{"value":["owner"]}]}`, `{"filters":[{"byAdmin":[{"value":["owner"]}]}]}`},
+		{`{"host_ip":["192.0.2.1"],"admin":[{"value":["owner"]}]}`, `{"filters":[{"ip":["192.0.2.1"]},{"byAdmin":[{"value":["owner"]}]}]}`},
+		{`{"active":false}`, `{"filters":[]}`},
 	} {
 		args, err := d.decodeArguments([]byte(tc.args))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if r, err := d.BuildRequest(args); tc.pass {
+		if r, err := d.BuildRequest(args); tc.body != "" {
 			if err != nil {
 				t.Errorf("调用 %s 失败：%v", tc.args, err)
 			} else {
+				body, err := io.ReadAll(r.Body)
 				r.Body.Close()
+				if err != nil || string(body) != tc.body {
+					t.Errorf("调用 %s 的请求体为 %s，期望 %s，错误 %v", tc.args, body, tc.body, err)
+				}
 			}
 		} else if err == nil || err.Error() != message || r != nil {
 			t.Errorf("调用 %s 应在构造请求前拒绝：请求 %v，错误 %v", tc.args, r, err)
 		}
 	}
+	if _, err := d.BuildRequest(map[string]any{"host_ip": []any{"192.0.2.1"}, "admin": []any{"owner"}}); err == nil || !strings.Contains(err.Error(), "admin[0].value") {
+		t.Fatalf("遗漏元素内数组字段的非空输入应拒绝：%v", err)
+	}
+	d.Parameters[0].Required = true
+	if _, err := d.BuildRequest(map[string]any{"host_ip": []any{}, "admin": []any{map[string]any{"value": []any{"owner"}}}}); err == nil || !strings.Contains(err.Error(), "host_ip 至少需要一项") {
+		t.Fatalf("必填筛选参数仍须通过非空校验：%v", err)
+	}
+	d.Parameters[0].Required = false
 	if schema := d.InputSchema(); schema["description"] != message || len(schema["required"].([]string)) != 0 {
 		t.Fatalf("筛选参数输入说明错误：%v", schema)
 	}

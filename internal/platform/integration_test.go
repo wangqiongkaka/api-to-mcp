@@ -453,7 +453,7 @@ func TestPlatformIntegration(t *testing.T) {
 			t.Fatal(code)
 		}
 		const message = "请至少填写一个筛选参数：host_ip、admin"
-		args := map[string]any{"limit": 1, "host_ip": []any{}}
+		args := map[string]any{"limit": 1, "host_ip": []any{""}, "admin": []any{" "}}
 		var rejection struct{ Error string }
 		if code := jsonRequest(t, alice, "POST", path+"/call", map[string]any{"arguments": args, "raw": true}, &rejection); code != 400 || rejection.Error != message {
 			t.Fatalf("试调用筛选错误：%d，%+v", code, rejection)
@@ -462,10 +462,17 @@ func TestPlatformIntegration(t *testing.T) {
 		if err != nil || !result.IsError || result.Content[0].(*mcp.TextContent).Text != message || guardedCalls.Load() != 0 {
 			t.Fatalf("MCP 筛选错误：%+v，%v，上游收到 %d 次调用", result, err, guardedCalls.Load())
 		}
-		args = map[string]any{"admin": []any{"owner"}}
+		args = map[string]any{"host_ip": []any{"192.0.2.1"}, "admin": []any{""}}
+		var call CallResult
+		want, _ := json.Marshal(`{"queryParams":[{"ip":["192.0.2.1"]}]}`)
+		if code := jsonRequest(t, alice, "POST", path+"/call", map[string]any{"arguments": args}, &call); code != 200 || strings.TrimSpace(call.Body) != string(want) {
+			t.Fatalf("试调用应只转发 IP 条件：%d，响应 %s", code, call.Body)
+		}
+		args = map[string]any{"host_ip": []any{""}, "admin": []any{"owner"}}
 		result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: guarded.Name, Arguments: args})
-		if err != nil || result.IsError || guardedCalls.Load() != 1 {
-			t.Fatalf("有效筛选未转发：%+v，%v，上游收到 %d 次调用", result, err, guardedCalls.Load())
+		want, _ = json.Marshal(`{"queryParams":[{"owner":["owner"]}]}`)
+		if err != nil || result.IsError || !strings.Contains(result.Content[0].(*mcp.TextContent).Text, string(want)) || guardedCalls.Load() != 2 {
+			t.Fatalf("MCP 应只转发负责人条件：%+v，%v，上游收到 %d 次调用", result, err, guardedCalls.Load())
 		}
 	})
 	if code := jsonRequest(t, alice, "DELETE", fmt.Sprintf("%s/api/tokens/%d", server.URL, token.ID), nil, nil); code != 200 {

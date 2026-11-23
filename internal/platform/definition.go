@@ -341,26 +341,17 @@ func (d Definition) BuildRequest(args map[string]any) (*http.Request, error) {
 		value, exists := args[p.Name]
 		if p.Fixed {
 			value, _ = fixedValue(p)
-		} else {
-			if !exists {
-				if p.Required {
-					return nil, fmt.Errorf("缺少必填参数：%s", p.Name)
-				}
-				if d.BodyTemplate != "" && p.In == "body" && p.Type == "array" {
-					body[p.Name] = omittedTemplateArray{}
-				}
-				continue
-			}
+		} else if exists {
 			if !validType(value, p.Type) {
 				if p.Type == "integer" {
 					return nil, fmt.Errorf("参数 %s 应为安全范围内的整数；超过 ±9007199254740991 的 ID 请使用字符串类型", p.Name)
 				}
 				return nil, fmt.Errorf("参数 %s 的类型应为 %s", p.Name, p.Type)
 			}
-			if p.NonEmpty && len(value.([]any)) == 0 {
-				return nil, fmt.Errorf("参数 %s 至少需要一项", p.Name)
-			}
-			if field := p.ItemArrayField; field != "" {
+			optionalFilter := p.QueryFilter && !p.Required
+			if optionalFilter && !hasQueryFilterValue(value, "") {
+				exists = false
+			} else if field := p.ItemArrayField; field != "" {
 				for i, item := range value.([]any) {
 					object, _ := item.(map[string]any)
 					values, ok := object[field].([]any)
@@ -368,7 +359,20 @@ func (d Definition) BuildRequest(args map[string]any) (*http.Request, error) {
 						return nil, fmt.Errorf("参数 %s[%d].%s 必须是至少包含一项的数组", p.Name, i, field)
 					}
 				}
+				exists = !optionalFilter || hasQueryFilterValue(value, field)
 			}
+			if exists && p.NonEmpty && len(value.([]any)) == 0 {
+				return nil, fmt.Errorf("参数 %s 至少需要一项", p.Name)
+			}
+		}
+		if !p.Fixed && !exists {
+			if p.Required {
+				return nil, fmt.Errorf("缺少必填参数：%s", p.Name)
+			}
+			if d.BodyTemplate != "" && p.In == "body" && p.Type == "array" {
+				body[p.Name] = omittedTemplateArray{}
+			}
+			continue
 		}
 		switch p.In {
 		case "path":
