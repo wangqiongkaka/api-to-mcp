@@ -35,11 +35,11 @@ func (d Definition) OpenAPI() ([]byte, error) {
 		}
 		if p.In == "body" {
 			properties[p.Name] = s
-			if p.Fixed || p.Required {
+			if p.Fixed || p.requiresValue() {
 				required = append(required, p.Name)
 			}
 		} else {
-			parameters = append(parameters, map[string]any{"name": p.Name, "in": p.In, "description": p.Description, "required": p.Fixed || p.Required || p.In == "path", "schema": s})
+			parameters = append(parameters, map[string]any{"name": p.Name, "in": p.In, "description": p.Description, "required": p.Fixed || p.requiresValue() || p.In == "path", "schema": s})
 		}
 	}
 	op := map[string]any{"operationId": d.Name, "summary": d.Description, "parameters": parameters, "responses": map[string]any{"default": map[string]any{"description": "上游接口响应；未声明响应结构。"}}}

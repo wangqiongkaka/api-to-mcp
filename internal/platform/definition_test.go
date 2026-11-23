@@ -40,14 +40,14 @@ func TestBuildRequestRequiresQueryFilter(t *testing.T) {
 	d := sampleDefinition()
 	d.Method = "POST"
 	d.Parameters = []Parameter{
-		{Name: "host_ip", In: "body", Type: "array", QueryFilter: true, NonEmpty: true},
+		{Name: "host_ip", In: "body", Type: "array", QueryFilter: true},
 		{Name: "admin", In: "body", Type: "array", QueryFilter: true},
 		{Name: "limit", In: "query", Type: "integer"},
 		{Name: "auth", In: "header", Type: "string", Fixed: true, Value: "secret"},
 		{Name: "active", In: "query", Type: "boolean", QueryFilter: true},
 	}
 	d.BodyTemplate = `{"filters":[{"ip":"{{host_ip}}"},{"byAdmin":"{{admin}}"}]}`
-	const message = "请至少填写一个筛选参数：host_ip、admin、active"
+	const message = "请填写 host_ip 或 admin 或 active"
 	for _, tc := range []struct {
 		args string
 		body string
@@ -84,11 +84,14 @@ func TestBuildRequestRequiresQueryFilter(t *testing.T) {
 			t.Errorf("调用 %s 应在构造请求前拒绝：请求 %v，错误 %v", tc.args, r, err)
 		}
 	}
-	d.Parameters[0].Required = true
+	d.Parameters[0].NonEmpty = true
+	if _, err := d.BuildRequest(map[string]any{"admin": []any{"owner"}}); err == nil {
+		t.Fatal("其他筛选项有值也必须校验 host_ip")
+	}
 	if _, err := d.BuildRequest(map[string]any{"host_ip": []any{}, "admin": []any{map[string]any{"value": []any{"owner"}}}}); err == nil || !strings.Contains(err.Error(), "host_ip 至少需要一项") {
 		t.Fatalf("必填筛选参数仍须通过非空校验：%v", err)
 	}
-	d.Parameters[0].Required = false
+	d.Parameters[0].NonEmpty = false
 	if schema := d.InputSchema(); schema["description"] != message || len(schema["required"].([]string)) != 0 {
 		t.Fatalf("筛选参数输入说明错误：%v", schema)
 	}
@@ -129,7 +132,7 @@ func TestOptionalArrayWithSingleQueryFilter(t *testing.T) {
 				t.Fatalf("输入 %s 得到 %s，期望 %s，错误 %v", input, body, tc.want, err)
 			}
 		}
-		if r, err := d.BuildRequest(map[string]any{"admin": []any{"owner"}}); r != nil || err == nil || err.Error() != "请至少填写一个筛选参数：host_ip" {
+		if r, err := d.BuildRequest(map[string]any{"admin": []any{"owner"}}); r != nil || err == nil || err.Error() != "请填写 host_ip" {
 			t.Fatalf("只有未勾选参数时应拦截，得到 %v，%v", r, err)
 		}
 	}
@@ -171,7 +174,11 @@ func TestNonEmptyParameterTypes(t *testing.T) {
 			d := sampleDefinition()
 			d.Method = "POST"
 			d.Parameters = []Parameter{{Name: "value", In: "body", Type: tc.kind, NonEmpty: true}}
-			for _, args := range []map[string]any{nil, {"value": tc.valid}} {
+			if _, err := d.BuildRequest(nil); err == nil {
+				t.Fatal("允许省略非空参数")
+			}
+			{
+				args := map[string]any{"value": tc.valid}
 				if _, err := d.BuildRequest(args); err != nil {
 					t.Fatal(err)
 				}
@@ -288,7 +295,7 @@ func TestBodyTemplateOmitsUnprovidedOptionalArray(t *testing.T) {
 	d := sampleDefinition()
 	d.Method = "POST"
 	d.Parameters = []Parameter{
-		{Name: "ips", In: "body", Type: "array", NonEmpty: true},
+		{Name: "ips", In: "body", Type: "array"},
 		{Name: "limit", In: "body", Type: "integer", Required: true},
 	}
 	d.BodyTemplate = `{
@@ -327,6 +334,7 @@ func TestBodyTemplateOmitsUnprovidedOptionalArray(t *testing.T) {
 			}
 		})
 	}
+	d.Parameters[0].NonEmpty = true
 	for _, invalid := range []any{nil, []any{}} {
 		if _, err := d.BuildRequest(map[string]any{"limit": float64(7), "ips": invalid}); err == nil {
 			t.Fatalf("接受了无效数组：%v", invalid)

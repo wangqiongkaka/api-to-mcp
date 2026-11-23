@@ -100,7 +100,7 @@ func (d Definition) Validate() error {
 		case "body":
 			hasBody = true
 			if d.BodyTemplate != "" {
-				if !p.Fixed && !p.Required && p.Type != "array" {
+				if !p.Fixed && !p.requiresValue() && p.Type != "array" {
 					return fmt.Errorf("模板中的请求体参数必须为必填或固定值：%s", p.Name)
 				}
 				templateParams[p.Name] = nil
@@ -122,7 +122,7 @@ func (d Definition) Validate() error {
 		}
 		if p.In == "path" {
 			paths[p.Name] = true
-			if !strings.Contains(u.Path, "{"+p.Name+"}") || (!p.Fixed && !p.Required) {
+			if !strings.Contains(u.Path, "{"+p.Name+"}") || (!p.Fixed && !p.requiresValue()) {
 				return fmt.Errorf("路径参数须对应 URL 占位符且必填：%s", p.Name)
 			}
 		}
@@ -198,6 +198,10 @@ func valueText(v any) string {
 	return string(b)
 }
 
+func (p Parameter) requiresValue() bool {
+	return p.Required || p.NonEmpty
+}
+
 func (p Parameter) schema() map[string]any {
 	schema := map[string]any{"type": p.Type, "description": p.Description}
 	if p.Type == "integer" {
@@ -229,7 +233,7 @@ func (d Definition) InputSchema() map[string]any {
 			continue
 		}
 		properties[p.Name] = p.schema()
-		if p.Required {
+		if p.requiresValue() {
 			required = append(required, p.Name)
 		}
 	}
@@ -251,7 +255,7 @@ func (d Definition) queryFilterNames() []string {
 }
 
 func queryFilterMessage(names []string) string {
-	return "请至少填写一个筛选参数：" + strings.Join(names, "、")
+	return "请填写 " + strings.Join(names, " 或 ")
 }
 
 func hasQueryFilterValue(value any) bool {
@@ -311,31 +315,34 @@ func (d Definition) BuildRequest(args map[string]any) (*http.Request, error) {
 				}
 				return nil, fmt.Errorf("参数 %s 的类型应为 %s", p.Name, p.Type)
 			}
-			optionalFilter := p.QueryFilter && !p.Required
+			optionalFilter := p.QueryFilter && !p.requiresValue()
 			array, isArray := value.([]any)
-			emptyOptionalArray := len(filters) > 0 && !p.Required && isArray && len(array) == 0
+			emptyOptionalArray := len(filters) > 0 && !p.requiresValue() && isArray && len(array) == 0
 			if emptyOptionalArray || (optionalFilter && !hasQueryFilterValue(value)) {
 				exists = false
 			}
-			if exists && p.NonEmpty {
+			if p.NonEmpty {
 				switch v := value.(type) {
 				case string:
 					if strings.TrimSpace(v) == "" {
 						return nil, fmt.Errorf("参数 %s 不能为空白", p.Name)
 					}
 				case map[string]any:
-					if len(v) == 0 {
+					if !hasQueryFilterValue(v) {
 						return nil, fmt.Errorf("参数 %s 至少需要一个属性", p.Name)
 					}
 				case []any:
-					if len(v) == 0 {
+					if !hasQueryFilterValue(v) {
 						return nil, fmt.Errorf("参数 %s 至少需要一项", p.Name)
 					}
 				}
 			}
 		}
 		if !p.Fixed && !exists {
-			if p.Required {
+			if p.NonEmpty {
+				return nil, fmt.Errorf("参数 %s 不能为空", p.Name)
+			}
+			if p.requiresValue() {
 				return nil, fmt.Errorf("缺少必填参数：%s", p.Name)
 			}
 			if d.BodyTemplate != "" && p.In == "body" && p.Type == "array" {

@@ -52,7 +52,7 @@ const bodyParameters = computed(() =>
   editor.value?.parameters.filter((p) => p.in === "body") ?? [],
 );
 const bodyTemplateParameters = computed(() =>
-  bodyParameters.value.filter((p) => p.name && (p.fixed || p.required || p.type === "array")),
+  bodyParameters.value.filter((p) => p.name && (p.fixed || p.required || p.nonEmpty || p.type === "array")),
 );
 const canSendBody = computed(
   () => editor.value?.method !== "GET" && editor.value?.method !== "HEAD",
@@ -116,12 +116,12 @@ const schema = computed(() => {
         ? { minimum: -9007199254740991, maximum: 9007199254740991 }
         : {}),
     };
-    if (p.required) required.push(p.name);
+    if (p.required || p.nonEmpty) required.push(p.name);
     if (p.queryFilter) filters.push(p.name);
   }
   return {
     type: "object", properties, required, additionalProperties: false,
-    ...(filters.length ? { description: `请至少填写一个筛选参数：${filters.join("、")}` } : {}),
+    ...(filters.length ? { description: `请填写 ${filters.join(" 或 ")}` } : {}),
   };
 });
 const previewText = computed(() =>
@@ -406,12 +406,27 @@ function syncTrialRows() {
 }
 watch(trialFields, syncTrialRows);
 
+const requirements = ["选填", "必须传入", "必须有值"] as const;
+function requirementOf(p: Parameter) {
+  if (p.nonEmpty) return "必须有值";
+  return p.required ? "必须传入" : "选填";
+}
+function setRequirement(p: Parameter, choice: string) {
+  p.required = choice !== "选填";
+  p.nonEmpty = choice === "必须有值";
+}
+
 function trialArguments() {
   const entries: string[] = [];
   for (const {name, type, value, parameter} of trialRows.value) {
     const trimmed = value.trim();
     if (!trimmed) {
-      if (parameter.required) throw new Error(`请填写必填参数：${name}`);
+      if (parameter.nonEmpty) throw new Error(`参数 ${name} 不能为空`);
+      if (parameter.required) {
+        const empty = type === "string" ? JSON.stringify(value) : type === "array" ? "[]" : type === "object" ? "{}" : undefined;
+        if (empty === undefined) throw new Error(`请填写必填参数：${name}`);
+        entries.push(`${JSON.stringify(name)}:${empty}`);
+      }
       continue;
     }
     let json = trimmed;
@@ -1109,8 +1124,7 @@ onUnmounted(() => {
                             <th scope="col">类型</th>
                             <th scope="col">映射方式 / 固定值</th>
                             <th scope="col" class="checkbox-cell">筛选参数</th>
-                            <th scope="col" class="checkbox-cell">非空</th>
-                            <th scope="col" class="checkbox-cell">必填</th>
+                            <th scope="col">填写要求</th>
                             <th scope="col" aria-label="操作"></th>
                           </tr>
                         </thead>
@@ -1181,21 +1195,13 @@ onUnmounted(() => {
                                 :aria-label="`参数 ${index + 1} 筛选参数`"
                               />
                             </td>
-                            <td class="checkbox-cell">
-                              <input
-                                v-model="p.nonEmpty"
-                                type="checkbox"
-                                :disabled="p.fixed"
-                                :aria-label="`参数 ${index + 1} 非空`"
-                              />
-                            </td>
-                            <td class="checkbox-cell">
-                              <input
-                                v-model="p.required"
-                                type="checkbox"
-                                :disabled="p.fixed"
-                                :aria-label="`参数 ${index + 1} 必填`"
-                              />
+                            <td>
+                              <select v-if="!p.fixed" :value="requirementOf(p)"
+                                :aria-label="`参数 ${index + 1} 填写要求`"
+                                @change="setRequirement(p, ($event.target as HTMLSelectElement).value)">
+                                <option v-for="choice in requirements" :key="choice">{{ choice }}</option>
+                              </select>
+                              <span v-else class="muted">无需填写</span>
                             </td>
                             <td>
                               <button
@@ -1316,7 +1322,7 @@ onUnmounted(() => {
                   <thead><tr><th scope="col">参数</th><th scope="col">调试值</th></tr></thead>
                   <tbody>
                     <tr v-for="row in trialRows" :key="row.name">
-                      <th scope="row">{{ row.name }}<small>{{ parameterTypes[row.type] }}{{ row.parameter.required ? " · 必填" : "" }}</small></th>
+                      <th scope="row">{{ row.name }}<small>{{ parameterTypes[row.type] }} · {{ requirementOf(row.parameter) }}</small></th>
                       <td>
                         <select v-if="row.type === 'boolean'" v-model="row.value" :aria-label="`调试值 ${row.name}`">
                           <option value="">请选择</option><option value="true">true</option><option value="false">false</option>

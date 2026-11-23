@@ -431,7 +431,7 @@ func TestPlatformIntegration(t *testing.T) {
 		if code := jsonRequest(t, alice, "POST", path+"/publish", map[string]bool{"published": true}, nil); code != 200 {
 			t.Fatal(code)
 		}
-		const message = "请至少填写一个筛选参数：host_ip、admin"
+		const message = "请填写 host_ip 或 admin"
 		args := map[string]any{"limit": 1, "host_ip": []any{""}, "admin": []any{" "}}
 		var rejection struct{ Error string }
 		if code := jsonRequest(t, alice, "POST", path+"/call", map[string]any{"arguments": args, "raw": true}, &rejection); code != 400 || rejection.Error != message {
