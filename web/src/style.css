@@ -47,7 +47,6 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 .body-template summary:focus-visible,
-.array-options summary:focus-visible,
 .call-panel:focus-visible,
 .output-picker summary:focus-visible {
   outline: 3px solid var(--blue);
@@ -954,36 +953,6 @@ tbody tr:last-child td {
 }
 .parameter-table td.checkbox-cell {
   padding-top: 22px;
-}
-.array-options {
-  margin-top: 7px;
-}
-.array-options summary {
-  width: fit-content;
-  cursor: pointer;
-  color: var(--blue);
-  padding-block: 4px;
-  font-size: 12px;
-}
-.array-options[open] {
-  padding: 7px 8px 8px;
-  border-radius: 7px;
-  background: #f6f8fc;
-}
-.array-options[open] > label {
-  margin-top: 6px;
-}
-.array-item-field {
-  gap: 4px;
-  font-size: 12px;
-}
-.parameter-table .array-item-field input {
-  padding-inline: 8px;
-}
-.array-item-help {
-  color: var(--muted);
-  font-weight: 400;
-  line-height: 1.5;
 }
 .parameter-table input[type="checkbox"] {
   width: 15px;

@@ -13,7 +13,6 @@ export interface Parameter {
   required: boolean;
   queryFilter?: boolean;
   nonEmpty?: boolean;
-  itemArrayField?: string;
   fixed: boolean;
   value: string;
 }

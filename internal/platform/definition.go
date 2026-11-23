@@ -14,16 +14,16 @@ import (
 )
 
 type Parameter struct {
-	Name           string `json:"name"`
-	Description    string `json:"description"`
-	In             string `json:"in"`
-	Type           string `json:"type"`
-	Required       bool   `json:"required"`
-	QueryFilter    bool   `json:"queryFilter,omitempty"`
-	NonEmpty       bool   `json:"nonEmpty,omitempty"`
-	ItemArrayField string `json:"itemArrayField,omitempty"`
-	Fixed          bool   `json:"fixed"`
-	Value          string `json:"value"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	In          string `json:"in"`
+	Type        string `json:"type"`
+	Required    bool   `json:"required"`
+	QueryFilter bool   `json:"queryFilter,omitempty"`
+	NonEmpty    bool   `json:"nonEmpty,omitempty"`
+
+	Fixed bool   `json:"fixed"`
+	Value string `json:"value"`
 }
 
 type Definition struct {
@@ -94,9 +94,6 @@ func (d Definition) Validate() error {
 		}
 		if p.QueryFilter && p.Fixed {
 			return fmt.Errorf("仅客户端填写的参数可设为筛选参数：%s", p.Name)
-		}
-		if p.ItemArrayField != "" && (p.Type != "array" || p.Fixed || !parameterName.MatchString(p.ItemArrayField)) {
-			return fmt.Errorf("元素内非空数组字段无效：%s", p.Name)
 		}
 		switch p.In {
 		case "query", "path", "header":
@@ -222,15 +219,7 @@ func (p Parameter) schema() map[string]any {
 		}
 	}
 	if p.Type == "array" {
-		items := map[string]any{}
-		if field := p.ItemArrayField; field != "" {
-			items["type"] = "object"
-			items["required"] = []string{field}
-			items["properties"] = map[string]any{
-				field: map[string]any{"type": "array", "minItems": 1, "items": map[string]any{}},
-			}
-		}
-		schema["items"] = items
+		schema["items"] = map[string]any{}
 		if p.NonEmpty {
 			schema["minItems"] = 1
 		}
@@ -274,23 +263,19 @@ func queryFilterMessage(names []string) string {
 	return "请至少填写一个筛选参数：" + strings.Join(names, "、")
 }
 
-func hasQueryFilterValue(value any, itemArrayField string) bool {
+func hasQueryFilterValue(value any) bool {
 	switch value := value.(type) {
 	case string:
 		return strings.TrimSpace(value) != ""
 	case []any:
 		for _, item := range value {
-			if itemArrayField != "" {
-				object, _ := item.(map[string]any)
-				item = object[itemArrayField]
-			}
-			if hasQueryFilterValue(item, "") {
+			if hasQueryFilterValue(item) {
 				return true
 			}
 		}
 	case map[string]any:
 		for _, item := range value {
-			if hasQueryFilterValue(item, "") {
+			if hasQueryFilterValue(item) {
 				return true
 			}
 		}
@@ -360,17 +345,8 @@ func (d Definition) BuildRequest(args map[string]any) (*http.Request, error) {
 			optionalFilter := p.QueryFilter && !p.Required
 			array, isArray := value.([]any)
 			emptyOptionalArray := len(filters) > 0 && !p.Required && isArray && len(array) == 0
-			if emptyOptionalArray || (optionalFilter && !hasQueryFilterValue(value, "")) {
+			if emptyOptionalArray || (optionalFilter && !hasQueryFilterValue(value)) {
 				exists = false
-			} else if field := p.ItemArrayField; field != "" {
-				for i, item := range value.([]any) {
-					object, _ := item.(map[string]any)
-					values, ok := object[field].([]any)
-					if !ok || len(values) == 0 {
-						return nil, fmt.Errorf("参数 %s[%d].%s 必须是至少包含一项的数组", p.Name, i, field)
-					}
-				}
-				exists = !optionalFilter || hasQueryFilterValue(value, field)
 			}
 			if exists && p.NonEmpty {
 				switch v := value.(type) {
@@ -446,7 +422,7 @@ func (d Definition) BuildRequest(args map[string]any) (*http.Request, error) {
 	if len(filters) > 0 && !slices.ContainsFunc(filters, func(name string) bool {
 		p := dynamic[name]
 		return (d.BodyTemplate == "" || p.In != "body" || slices.Contains(renderedParameters, name)) &&
-			hasQueryFilterValue(args[name], p.ItemArrayField)
+			hasQueryFilterValue(args[name])
 	}) {
 		return nil, fmt.Errorf("%s", queryFilterMessage(filters))
 	}

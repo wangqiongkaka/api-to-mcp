@@ -97,19 +97,11 @@ const schema = computed(() => {
   }
   for (const p of editor.value?.parameters ?? []) {
     if (p.fixed || !p.name) continue;
-    const field = p.itemArrayField;
-    const items = field
-      ? {
-          type: "object",
-          required: [field],
-          properties: { [field]: { type: "array", minItems: 1, items: {} } },
-        }
-      : {};
     properties[p.name] = {
       type: p.type,
       description: p.description,
       ...(p.type === "array"
-        ? { items, ...(p.nonEmpty ? { minItems: 1 } : {}) }
+        ? { items: {}, ...(p.nonEmpty ? { minItems: 1 } : {}) }
         : {}),
       ...(p.nonEmpty && p.type === "string" ? { pattern: "\\S" } : {}),
       ...(p.nonEmpty && p.type === "object" ? { minProperties: 1 } : {}),
@@ -1122,7 +1114,7 @@ onUnmounted(() => {
                             v-model="p.type"
                             class="parameter-type"
                             :aria-label="`参数 ${index + 1} 类型`"
-                            @change="if (p.type !== 'array') { p.itemArrayField = ''; }"
+
                           >
                             <option
                               v-for="(label, type) in parameterTypes"
@@ -1132,32 +1124,12 @@ onUnmounted(() => {
                               {{ label }} · {{ type }}
                             </option>
                           </select>
-                          <details
-                            v-if="p.type === 'array' && !p.fixed"
-                            class="array-options"
-                          >
-                            <summary>{{ p.itemArrayField ? "数组约束 · 已设置" : "数组约束" }}</summary>
-                            <label class="array-item-field">
-                              元素内数组字段
-                              <input
-                                v-model.trim="p.itemArrayField"
-                                :aria-label="`参数 ${index + 1} 元素内数组字段`"
-                                :aria-describedby="`array-item-help-${index}`"
-                                placeholder="如 value"
-                                maxlength="128"
-                              />
-                              <span
-                                :id="`array-item-help-${index}`"
-                                class="array-item-help"
-                              >指定字段后，每项的该字段须为非空数组。</span>
-                            </label>
-                          </details>
                         </td>
                         <td>
                           <select
                             v-model="p.fixed"
                             :aria-label="`参数 ${index + 1} 映射方式`"
-                            @change="if (p.fixed) { p.queryFilter = false; p.nonEmpty = false; p.itemArrayField = ''; }"
+                            @change="if (p.fixed) { p.queryFilter = false; p.nonEmpty = false; }"
                           >
                             <option :value="false">客户端填写</option>
                             <option :value="true">固定值</option></select

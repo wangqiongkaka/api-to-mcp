@@ -46,7 +46,7 @@ func TestBuildRequestRequiresQueryFilter(t *testing.T) {
 	d.Method = "POST"
 	d.Parameters = []Parameter{
 		{Name: "host_ip", In: "body", Type: "array", QueryFilter: true, NonEmpty: true},
-		{Name: "admin", In: "body", Type: "array", QueryFilter: true, ItemArrayField: "value"},
+		{Name: "admin", In: "body", Type: "array", QueryFilter: true},
 		{Name: "limit", In: "query", Type: "integer"},
 		{Name: "auth", In: "header", Type: "string", Fixed: true, Value: "secret"},
 		{Name: "active", In: "query", Type: "boolean", QueryFilter: true},
@@ -62,10 +62,10 @@ func TestBuildRequestRequiresQueryFilter(t *testing.T) {
 		{`{"host_ip":[],"limit":1}`, ""},
 		{`{"host_ip":[""],"admin":[" "]}`, ""},
 		{`{"host_ip":[null," ",[]]}`, ""},
-		{`{"admin":[{"field":"name","value":[" "]}]}`, ""},
+		{`{"admin":[{"value":[" "]}]}`, ""},
 		{`{"host_ip":["192.0.2.1"]}`, `{"filters":[{"ip":["192.0.2.1"]}]}`},
 		{`{"host_ip":["192.0.2.1"],"admin":[""]}`, `{"filters":[{"ip":["192.0.2.1"]}]}`},
-		{`{"host_ip":["192.0.2.1"],"admin":[{"field":"name","value":[" "]}]}`, `{"filters":[{"ip":["192.0.2.1"]}]}`},
+		{`{"host_ip":["192.0.2.1"],"admin":[{"value":[" "]}]}`, `{"filters":[{"ip":["192.0.2.1"]}]}`},
 		{`{"host_ip":[],"admin":[{"value":["owner"]}]}`, `{"filters":[{"byAdmin":[{"value":["owner"]}]}]}`},
 		{`{"host_ip":[""],"admin":[{"value":["owner"]}]}`, `{"filters":[{"byAdmin":[{"value":["owner"]}]}]}`},
 		{`{"host_ip":["192.0.2.1"],"admin":[{"value":["owner"]}]}`, `{"filters":[{"ip":["192.0.2.1"]},{"byAdmin":[{"value":["owner"]}]}]}`},
@@ -88,9 +88,6 @@ func TestBuildRequestRequiresQueryFilter(t *testing.T) {
 		} else if err == nil || err.Error() != message || r != nil {
 			t.Errorf("调用 %s 应在构造请求前拒绝：请求 %v，错误 %v", tc.args, r, err)
 		}
-	}
-	if _, err := d.BuildRequest(map[string]any{"host_ip": []any{"192.0.2.1"}, "admin": []any{"owner"}}); err == nil || !strings.Contains(err.Error(), "admin[0].value") {
-		t.Fatalf("遗漏元素内数组字段的非空输入应拒绝：%v", err)
 	}
 	d.Parameters[0].Required = true
 	if _, err := d.BuildRequest(map[string]any{"host_ip": []any{}, "admin": []any{map[string]any{"value": []any{"owner"}}}}); err == nil || !strings.Contains(err.Error(), "host_ip 至少需要一项") {
@@ -217,40 +214,18 @@ func TestRequiredArrayWithAtLeastOneItem(t *testing.T) {
 	}
 }
 
-func TestArrayItemRequiresNonEmptyArrayField(t *testing.T) {
+func TestLegacyArrayItemField(t *testing.T) {
 	d := sampleDefinition()
 	d.Method = "POST"
-	d.Parameters = []Parameter{{Name: "queryParams", In: "body", Type: "array", Required: true, NonEmpty: true, ItemArrayField: "value"}}
-	valid := map[string]any{"uniqueCode": "field-id", "value": []any{"10.12.78.132"}}
-	for _, item := range []any{
-		"10.12.78.132",
-		map[string]any{"uniqueCode": "field-id"},
-		map[string]any{"value": nil},
-		map[string]any{"value": "10.12.78.132"},
-		map[string]any{"value": []any{}},
-	} {
-		args := map[string]any{"queryParams": []any{valid, item}}
-		if _, err := d.BuildRequest(args); err == nil || !strings.Contains(err.Error(), "queryParams[1].value") {
-			t.Fatalf("应定位第二项中无效的 value：%v，%v", item, err)
-		}
-	}
-	if _, err := d.BuildRequest(map[string]any{"queryParams": []any{valid}}); err != nil {
+	d.Parameters = nil
+	if err := json.Unmarshal([]byte(`[{"name":"admin","in":"body","type":"array","itemArrayField":"value"}]`), &d.Parameters); err != nil {
 		t.Fatal(err)
 	}
-	queryParams := d.InputSchema()["properties"].(map[string]any)["queryParams"].(map[string]any)
-	items := queryParams["items"].(map[string]any)
-	field := items["properties"].(map[string]any)["value"].(map[string]any)
-	if items["type"] != "object" || items["required"].([]string)[0] != "value" || field["type"] != "array" || field["minItems"] != 1 {
-		t.Fatalf("MCP Schema 未声明每个元素中的非空数组字段：%v", items)
-	}
-	data, err := d.OpenAPI()
-	if err != nil {
+	if _, err := d.BuildRequest(map[string]any{"admin": []any{"owner"}}); err != nil {
 		t.Fatal(err)
 	}
-	p := parser.NewParser()
-	p.SetValidation(true)
-	if err := p.Parse(data); err != nil {
-		t.Fatalf("OpenAPI 导出未通过验证：%v", err)
+	if len(d.Parameters[0].schema()["items"].(map[string]any)) != 0 {
+		t.Fatal("旧配置仍限制数组元素")
 	}
 }
 
