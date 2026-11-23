@@ -190,9 +190,6 @@ fieldset:disabled textarea {
 .nowrap {
   white-space: nowrap;
 }
-.align-right {
-  text-align: right;
-}
 .grow {
   flex: 1;
   min-width: 0;
@@ -641,6 +638,7 @@ th:last-child {
   border-top-right-radius: 12px;
 }
 td {
+  text-align: left;
   padding: 20px;
   border-bottom: 1px solid #edf0f5;
   vertical-align: middle;
@@ -739,7 +737,6 @@ tbody tr:last-child td {
   color: #687a96;
 }
 .no-results {
-  text-align: center;
   padding: 48px 20px;
   color: #7c8a9d;
 }
@@ -938,13 +935,13 @@ tbody tr:last-child td {
 }
 .parameter-table .checkbox-cell {
   white-space: nowrap;
-  text-align: center;
 }
 .parameter-table td.checkbox-cell {
   padding-top: 22px;
 }
 .parameter-table input[type="checkbox"] {
   width: 15px;
+  margin: 0;
   height: 15px;
   min-height: 0;
 }
@@ -961,6 +958,7 @@ tbody tr:last-child td {
 .url-field { display: grid; gap: 6px; }
 .url-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .parameter-group + .parameter-group { border-top: 1px solid var(--border); }
+.parameter-group .parameter-table th:first-child,
 .parameter-group .parameter-table td:first-child {
   position: relative;
   padding-left: 32px;

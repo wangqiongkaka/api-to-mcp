@@ -903,7 +903,7 @@ onUnmounted(() => {
                 <th>状态</th>
                 <th v-if="user.role === 'admin'">所属用户</th>
                 <th>最近更新</th>
-                <th class="align-right">操作</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -930,7 +930,7 @@ onUnmounted(() => {
                   <span class="owner-name">{{ t.ownerName }}</span>
                 </td>
                 <td class="muted nowrap">{{ date(t.updatedAt) }}</td>
-                <td class="align-right nowrap">
+                <td class="nowrap">
                   <button v-if="isShared(t)" class="text-button" @click="openEditor(t, t.id)">调用</button>
                   <template v-else>
                     <button class="text-button" @click="openEditor(t, t.id)">配置</button>
@@ -990,7 +990,7 @@ onUnmounted(() => {
               class="button"
               :class="{ primary: selectedId !== null && !dirty }"
               @click="focusTrial"
-            >试调用</button>
+            >调试</button>
             <button
               class="button"
               :disabled="selectedId === null || dirty || saving || publishing"
@@ -1076,6 +1076,43 @@ onUnmounted(() => {
                       ＋ 添加参数
                     </button>
                   </div>
+                    <div v-if="group.key === 'body'" class="mapped-body">
+                      <p v-if="!canSendBody" class="body-method-warning">
+                        {{ editor.method }} 不支持请求体。请调整请求方法或移除请求体配置。
+                      </p>
+                      <details v-if="!published || editor.bodyTemplate" class="body-template">
+                        <summary>请求体模板</summary>
+                        <label for="body-template" class="sr-only">JSON 请求体模板</label>
+                        <textarea
+                          id="body-template"
+                          v-model.trim="editor.bodyTemplate"
+                          rows="4"
+                          maxlength="32768"
+                          spellcheck="false"
+                          class="code-input"
+                          placeholder='{"items":["{{value}}"]}'
+                          @input="bodyExtractionError = ''"
+                        />
+                        <div class="group-title"><button
+                          v-if="canSendBody && !published"
+                          type="button"
+                          class="button small"
+                          :disabled="!editor.bodyTemplate"
+                          @click="extractBodyParameters"
+                        >从占位符生成参数</button>
+                          <HelpHint v-if="canSendBody && !published" label="模板占位符说明" text="占位符须加双引号。未填写的选填数组会省略对应条件或字段，其他参数须必填或固定。" /></div>
+                        <div v-if="bodyExtractionError" class="alert error" role="alert">{{ bodyExtractionError }}</div>
+
+                        <p v-if="bodyTemplateParameters.length" class="body-template-tokens">
+                          <span>参数占位符</span>
+                          <code
+                            v-for="(p, index) in bodyTemplateParameters"
+                            :key="index"
+                            v-text="JSON.stringify(`{{${p.name}}}`)"
+                          />
+                        </p>
+                      </details>
+                    </div>
                     <div v-if="group.rows.length" class="table-wrap parameter-wrap">
                       <table class="parameter-table">
                         <thead>
@@ -1187,49 +1224,12 @@ onUnmounted(() => {
                         </tbody>
                       </table>
                     </div>
-                    <div v-if="group.key === 'body'" class="mapped-body">
-                      <p v-if="!canSendBody" class="body-method-warning">
-                        {{ editor.method }} 不支持请求体。请调整请求方法或移除请求体配置。
-                      </p>
-                      <details v-if="!published || editor.bodyTemplate" class="body-template">
-                        <summary>请求体模板</summary>
-                        <label for="body-template" class="sr-only">JSON 请求体模板</label>
-                        <textarea
-                          id="body-template"
-                          v-model.trim="editor.bodyTemplate"
-                          rows="4"
-                          maxlength="32768"
-                          spellcheck="false"
-                          class="code-input"
-                          placeholder='{"items":["{{value}}"]}'
-                          @input="bodyExtractionError = ''"
-                        />
-                        <div class="group-title"><button
-                          v-if="canSendBody && !published"
-                          type="button"
-                          class="button small"
-                          :disabled="!editor.bodyTemplate"
-                          @click="extractBodyParameters"
-                        >从占位符生成参数</button>
-                          <HelpHint v-if="canSendBody && !published" label="模板占位符说明" text="占位符须加双引号。未填写的选填数组会省略对应条件或字段，其他参数须必填或固定。" /></div>
-                        <div v-if="bodyExtractionError" class="alert error" role="alert">{{ bodyExtractionError }}</div>
-
-                        <p v-if="bodyTemplateParameters.length" class="body-template-tokens">
-                          <span>参数占位符</span>
-                          <code
-                            v-for="(p, index) in bodyTemplateParameters"
-                            :key="index"
-                            v-text="JSON.stringify(`{{${p.name}}}`)"
-                          />
-                        </p>
-                      </details>
-                    </div>
                 </section>
                 <section aria-labelledby="output-fields-title">
                   <div class="parameter-heading">
                     <div class="group-title">
                       <h2 id="output-fields-title">输出字段</h2>
-                      <HelpHint v-if="!availableOutputPaths.length && !published" label="输出字段说明" text="试调用成功后可从响应中选取字段。" />
+                      <HelpHint v-if="!availableOutputPaths.length && !published" label="输出字段说明" text="调试成功后可从响应中选取字段。" />
                     </div>
                     <button type="button" class="button small" @click="addOutputField">
                       ＋ 添加输出字段
@@ -1239,7 +1239,7 @@ onUnmounted(() => {
                     <div class="output-picker">
                       <details>
                         <summary>
-                          <span>从试调用结果选字段</span>
+                          <span>从调试结果选字段</span>
                           <span v-if="selectedOutputPaths.length"> · 已选 {{ selectedOutputPaths.length }} 项</span>
                         </summary>
                         <div class="output-path-list" role="group" aria-label="可选字段">
@@ -1313,8 +1313,8 @@ onUnmounted(() => {
             <section ref="trialPanel" class="panel call-panel" tabindex="-1" aria-labelledby="trial-title">
               <div class="panel-heading">
                 <div class="group-title">
-                  <h2 id="trial-title">试调用</h2>
-                  <HelpHint label="试调用说明" text="会向上游发送真实请求。" />
+                  <h2 id="trial-title">调试</h2>
+                  <HelpHint label="调用参数说明" text="调用参数（JSON）根据参数配置自动生成。填写值后发送请求，将调用真实上游接口。" />
                 </div>
                 <button
                   class="button primary"
@@ -1325,14 +1325,13 @@ onUnmounted(() => {
                 </button>
               </div>
               <div class="form-content">
-                <label
-                  >调用参数（JSON）<textarea
+                <textarea
+                    aria-label="调用参数（JSON）"
                     v-model="callArgs"
                     class="code-input"
                     rows="5"
                     spellcheck="false"
                   />
-                </label>
                 <p v-if="selectedId === null || dirty" class="field-help">
                   保存草稿后可发送请求。
                 </p>
@@ -1468,7 +1467,7 @@ onUnmounted(() => {
                   <th>名称</th>
                   <th>令牌前缀</th>
                   <th>创建时间</th>
-                  <th class="align-right">操作</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -1478,7 +1477,7 @@ onUnmounted(() => {
                     <code>{{ t.prefix }}••••••••</code>
                   </td>
                   <td>{{ date(t.createdAt) }}</td>
-                  <td class="align-right">
+                  <td>
                     <button
                       class="text-button danger-text"
                       @click="revokeToken(t)"
@@ -1514,7 +1513,7 @@ onUnmounted(() => {
                 <th>用户</th>
                 <th>角色</th>
                 <th>状态</th>
-                <th class="align-right">操作</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -1529,7 +1528,7 @@ onUnmounted(() => {
                     >{{ u.disabled ? "已停用" : "正常" }}</span
                   >
                 </td>
-                <td class="align-right">
+                <td>
                   <span v-if="u.role === 'admin'" class="muted">受保护账户</span
                   ><button v-else class="text-button" @click="toggleUser(u)">
                     {{ u.disabled ? "启用账户" : "停用账户" }}

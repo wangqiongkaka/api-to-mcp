@@ -13,7 +13,7 @@ async function registerMember(page: Page) {
   await expect(page.getByRole("heading", { name: "接口库" })).toBeVisible();
 }
 
-test("注册、配置、试调用、发布、导出和令牌管理", async ({ page }) => {
+test("注册、配置、调试、发布、导出和令牌管理", async ({ page }) => {
   const consoleErrors: string[] = [];
   page.on("pageerror", (error) => consoleErrors.push(error.message));
   await page.goto("/");
@@ -33,8 +33,8 @@ test("注册、配置、试调用、发布、导出和令牌管理", async ({ pa
   await expect(page.getByRole("button", { name: "发送请求" })).toBeDisabled();
   await page.getByRole("button", { name: "保存草稿" }).click();
   await expect(page.getByRole("button", { name: "发送请求" })).toBeEnabled();
-  await page.getByRole("button", { name: "试调用", exact: true }).click();
-  await expect(page.getByRole("region", { name: "试调用" })).toBeFocused();
+  await page.getByRole("button", { name: "调试", exact: true }).click();
+  await expect(page.getByRole("region", { name: "调试" })).toBeFocused();
   await page.getByRole("button", { name: "发送请求" }).click();
   await expect(page.getByText("HTTP 200", { exact: true })).toBeVisible();
   await expect(page.locator(".call-result pre")).toContainText(
@@ -123,7 +123,7 @@ test("注册、配置、试调用、发布、导出和令牌管理", async ({ pa
   expect(consoleErrors).toEqual([]);
 });
 
-test("从原始试调用响应多选字段并预览自定义输出", async ({ page }, testInfo) => {
+test("从原始调试响应多选字段并预览自定义输出", async ({ page }, testInfo) => {
   await page.goto("/");
   await registerMember(page);
   await page.getByRole("button", { name: "使用 Pod 查询示例" }).click();
@@ -137,7 +137,7 @@ test("从原始试调用响应多选字段并预览自定义输出", async ({ pa
   });
   await page.getByRole("button", { name: "保存草稿" }).click();
   await trial.click();
-  const picker = output.locator("summary").filter({ hasText: "从试调用结果选字段" });
+  const picker = output.locator("summary").filter({ hasText: "从调试结果选字段" });
   const paths = output.getByRole("group", { name: "可选字段" });
   const addSelected = output.getByRole("button", { name: "添加所选字段" });
   await expect(addSelected).toBeDisabled();
@@ -281,7 +281,7 @@ test("请求体配置按需展开并保留已保存的模板", async ({ page }) 
   await expect(page.getByRole("heading", { name: "你的第一个 AI 工具，从这里开始" })).toBeVisible();
 });
 
-test("从嵌套请求体模板生成参数并试调用", async ({ page }) => {
+test("从嵌套请求体模板生成参数并调试", async ({ page }) => {
   await page.goto("/");
   await registerMember(page);
   await page.getByRole("button", { name: "新建接口" }).click();
@@ -342,7 +342,7 @@ test("从嵌套请求体模板生成参数并试调用", async ({ page }) => {
   await expect(page.locator(".call-result pre")).toContainText('"roomName": "test-room"');
 });
 
-test("至少填写一个指定筛选参数才能试调用", async ({ page }, testInfo) => {
+test("至少填写一个指定筛选参数才能调试", async ({ page }, testInfo) => {
   await page.goto("/");
   await registerMember(page);
   const created = await page.request.post("/api/tools", {
@@ -427,9 +427,9 @@ test("至少填写一个指定筛选参数才能试调用", async ({ page }, tes
   await expect(ip).toBeInViewport();
   await expect(admin).toBeInViewport();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await page.getByRole("button", { name: "试调用", exact: true }).click();
-  const trial = page.getByRole("region", { name: "试调用" });
+  await page.getByRole("button", { name: "调试", exact: true }).click();
+  const trial = page.getByRole("region", { name: "调试" });
   await expect(trial).toBeFocused();
-  await expect(trial.getByRole("heading", { name: "试调用" })).toBeInViewport();
+  await expect(trial.getByRole("heading", { name: "调试" })).toBeInViewport();
   await page.screenshot({ path: testInfo.outputPath("editor-flow-mobile.png") });
 });
