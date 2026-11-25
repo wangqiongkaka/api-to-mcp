@@ -36,6 +36,7 @@ type Definition struct {
 	BodyTemplate   string        `json:"bodyTemplate,omitempty"`
 	Parameters     []Parameter   `json:"parameters"`
 	OutputFields   []OutputField `json:"outputFields,omitempty"`
+	Approval       *ApprovalRule `json:"approval,omitempty"`
 }
 
 var toolName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]{0,63}$`)
@@ -154,6 +155,9 @@ func (d Definition) Validate() error {
 	}
 	if strings.ContainsAny(placeholder.ReplaceAllString(u.Path, ""), "{}") {
 		return fmt.Errorf("URL 路径占位符格式无效")
+	}
+	if err := d.Approval.validate(); err != nil {
+		return err
 	}
 	return validateOutputFields(d.OutputFields)
 }

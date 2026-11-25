@@ -733,6 +733,58 @@ tbody tr:last-child td {
   background: #fff0f3;
   color: #b83246;
 }
+.tool-table .badge + .badge {
+  margin-left: 6px;
+}
+.badge.warning {
+  background: #fff5e6;
+  color: #a15a12;
+}
+.approval-settings {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+.form-content .check-label {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.check-label input {
+  width: 15px;
+  height: 15px;
+  min-height: 0;
+  margin: 0;
+}
+.approval-detail td {
+  background: #f9fafc;
+}
+.approval-detail td > p:first-child {
+  margin: 0 0 12px;
+}
+.approval-detail h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+.approval-detail pre {
+  margin: 0 0 14px;
+  padding: 12px;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: #f6f8fc;
+  border: 1px solid #e4eaf3;
+  border-radius: 7px;
+  color: #4a5e80;
+  font-size: 11px;
+}
+@media (max-width: 760px) {
+  .approval-settings {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .owner-name {
   color: #687a96;
 }

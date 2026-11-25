@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import HelpHint from "./HelpHint.vue";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import type { AccessToken, CallResult, Definition, Parameter, Tool, User } from "./types";
+import type { AccessToken, Approval, ApprovalRule, CallResult, Definition, Parameter, Tool, User } from "./types";
 import { definitionOf, emptyDefinition, podExample } from "./types";
 import { responsePaths } from "./outputPaths";
 
@@ -14,10 +14,24 @@ const authBusy = ref(false);
 const error = ref("");
 const toast = ref("");
 let toastTimer: ReturnType<typeof setTimeout>;
-const view = ref<"tools" | "tokens" | "users">("tools");
+const view = ref<"tools" | "approvals" | "tokens" | "users">("tools");
 const tools = ref<Tool[]>([]);
 const tokens = ref<AccessToken[]>([]);
 const users = ref<User[]>([]);
+const approvals = ref<Approval[]>([]);
+const openApproval = ref<Approval | null>(null);
+const deciding = ref(false);
+const pendingApprovals = computed(() => approvals.value.filter((item) => item.canDecide).length);
+const approvalStatus: Record<Approval["status"], [string, string]> = {
+  pending: ["待审批", "warning"],
+  expired: ["已过期", "neutral"],
+  rejected: ["已拒绝", "neutral"],
+  executing: ["执行中，结果未知", "warning"],
+  executed: ["已执行", "success"],
+  upstream_error: ["已执行，上游返回错误", "failure"],
+  unknown: ["结果未知", "warning"],
+  failed: ["未执行", "failure"],
+};
 const allowedOrigins = ref<string[]>([]);
 const search = ref("");
 const filter = ref("all");
@@ -168,9 +182,16 @@ function isShared(tool: Tool) {
 async function refreshTools() {
   tools.value = await api<Tool[]>("/tools");
 }
+async function loadApprovals() {
+  approvals.value = await api<Approval[]>("/approvals");
+  if (openApproval.value && !approvals.value.some((item) => item.id === openApproval.value?.id))
+    openApproval.value = null;
+}
 async function afterLogin() {
+  if (window.location.hash === "#approvals") view.value = "approvals";
   await Promise.all([
     refreshTools(),
+    loadApprovals(),
     api<{ allowedOrigins: string[] }>("/settings").then((s) => {
       allowedOrigins.value = s.allowedOrigins;
     }),
@@ -232,6 +253,7 @@ async function navigate(next: typeof view.value) {
   createdToken.value = "";
   try {
     if (next === "tools") await refreshTools();
+    if (next === "approvals") await loadApprovals();
     if (next === "tokens") tokens.value = await api<AccessToken[]>("/tokens");
     if (next === "users") users.value = await api<User[]>("/users");
   } catch (e) {
@@ -258,6 +280,49 @@ function openEditor(definition: Definition, id: number | null = null) {
 
 function newTool(example = false) {
   openEditor(example ? podExample() : emptyDefinition());
+}
+
+function setApproval(enabled: boolean, approver: ApprovalRule["approver"] = "self") {
+  if (!editor.value) return;
+  editor.value.approval = !enabled ? undefined
+    : approver === "user" ? { approver, approverName: "" } : { approver };
+}
+
+async function toggleApproval(item: Approval) {
+  if (openApproval.value?.id === item.id) {
+    openApproval.value = null;
+    return;
+  }
+  try {
+    openApproval.value = await api<Approval>(`/approvals/${item.id}`);
+  } catch (e) {
+    error.value = message(e);
+  }
+}
+
+async function decideApproval(item: Approval, approve: boolean) {
+  if (approve && !window.confirm(`批准后将立即按提交的参数执行 ${item.toolName}，确定批准吗？`)) return;
+  deciding.value = true;
+  error.value = "";
+  try {
+    const detail = await api<Approval>(`/approvals/${item.id}/decision`, {
+      method: "POST",
+      body: JSON.stringify({ approve }),
+    });
+    openApproval.value = detail;
+    await loadApprovals();
+    notify({
+      executed: "已批准，接口已执行，结果已保存",
+      upstream_error: "已批准并执行，上游返回错误，请查看结果",
+      unknown: "请求已发出但结果未知，请到上游核实",
+      failed: "已批准，但接口未执行，请查看原因",
+    }[detail.status as string] ?? "已拒绝该审批单");
+  } catch (e) {
+    error.value = message(e);
+    await loadApprovals().catch(() => undefined);
+  } finally {
+    deciding.value = false;
+  }
 }
 
 function addParameter() {
@@ -804,6 +869,16 @@ onUnmounted(() => {
             >{{ tools.length }}</span
           ></button
         ><button
+          :class="{ active: view === 'approvals' }"
+          @click="navigate('approvals')"
+        >
+          <span class="nav-icon" aria-hidden="true">✓</span>审批<span
+            v-if="pendingApprovals"
+            class="nav-count"
+            :aria-label="`${pendingApprovals} 个待你审批`"
+            >{{ pendingApprovals }}</span
+          ></button
+        ><button
           :class="{ active: view === 'tokens' }"
           @click="navigate('tokens')"
         >
@@ -927,6 +1002,7 @@ onUnmounted(() => {
                     ><i></i>{{ t.published ? "已发布" : "草稿" }}</span
                   >
                   <span v-if="t.public" class="badge neutral">公共</span>
+                  <span v-if="t.approval" class="badge warning">需审批</span>
                 </td>
                 <td v-if="user.role === 'admin'">
                   <span class="owner-name">{{ t.ownerName }}</span>
@@ -1301,6 +1377,38 @@ onUnmounted(() => {
                     </div>
                   </div>
                 </section>
+                <section aria-labelledby="approval-title">
+                  <div class="parameter-heading">
+                    <div class="group-title">
+                      <h2 id="approval-title">调用审批</h2>
+                      <HelpHint label="调用审批说明" text="开启后，MCP 调用先生成审批单，不会立即执行。审批通过后由平台按提交时的参数执行一次并保存结果。" />
+                    </div>
+                  </div>
+                  <div class="form-content">
+                    <label class="check-label"><input
+                      type="checkbox"
+                      :checked="!!editor.approval"
+                      @change="setApproval(($event.target as HTMLInputElement).checked)"
+                    />MCP 调用需审批</label>
+                    <div v-if="editor.approval" class="approval-settings">
+                      <label>审批人<select
+                        :value="editor.approval.approver"
+                        @change="setApproval(true, ($event.target as HTMLSelectElement).value as ApprovalRule['approver'])"
+                      >
+                        <option value="self">调用者本人</option>
+                        <option value="admin">任一管理员</option>
+                        <option value="user">指定用户</option>
+                      </select></label>
+                      <label v-if="editor.approval.approver === 'user'">审批人用户名<input
+                        v-model.trim="editor.approval.approverName"
+                        required
+                        maxlength="32"
+                        autocomplete="off"
+                        placeholder="例如 zhangsan"
+                      /></label>
+                    </div>
+                  </div>
+                </section>
               </fieldset>
             </form>
             <section ref="trialPanel" class="panel call-panel" tabindex="-1" aria-labelledby="trial-title">
@@ -1311,7 +1419,7 @@ onUnmounted(() => {
                 </div>
                 <button
                   class="button primary"
-                  :disabled="selectedId === null || dirty || calling"
+                  :disabled="selectedId === null || dirty || calling || (sharedTool && !!editor.approval)"
                   @click="runCall"
                 >
                   {{ calling ? "请求中…" : "发送请求" }}
@@ -1343,6 +1451,9 @@ onUnmounted(() => {
                 <p v-else>此接口无需填写调试参数。</p>
                 <p v-if="selectedId === null || dirty" class="field-help">
                   保存草稿后可发送请求。
+                </p>
+                <p v-else-if="editor.approval" class="field-help">
+                  {{ sharedTool ? "该接口需审批，请通过 MCP 调用提交，审批通过后由平台执行。" : "调试请求由维护者直接发送，不经过审批。" }}
                 </p>
                 <div v-if="callError" class="alert error" role="alert">
                   {{ callError }}
@@ -1412,6 +1523,80 @@ onUnmounted(() => {
             </section>
           </aside>
         </div>
+      </template>
+      <template v-else-if="view === 'approvals'">
+        <header class="page-header">
+          <div>
+            <div class="breadcrumb">工作空间 / 调用审批</div>
+            <h1>审批</h1>
+            <p>MCP 调用需审批的接口时生成审批单，批准后由平台按提交时的参数执行一次并保存结果。</p>
+          </div>
+          <button class="button" @click="navigate('approvals')">刷新</button>
+        </header>
+        <section class="panel table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>单号</th>
+                <th>工具</th>
+                <th>申请人</th>
+                <th>审批人</th>
+                <th>状态</th>
+                <th>提交时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template v-for="item in approvals" :key="item.id">
+                <tr>
+                  <td class="nowrap">#{{ item.id }}</td>
+                  <td><strong>{{ item.toolName }}</strong></td>
+                  <td>{{ item.requester }}</td>
+                  <td>{{ item.approver }}</td>
+                  <td>
+                    <span :class="['badge', approvalStatus[item.status][1]]">{{ approvalStatus[item.status][0] }}</span>
+                  </td>
+                  <td class="muted nowrap">{{ date(item.createdAt) }}</td>
+                  <td class="nowrap">
+                    <button class="text-button" :aria-expanded="openApproval?.id === item.id" @click="toggleApproval(item)">
+                      {{ openApproval?.id === item.id ? "收起" : "详情" }}
+                    </button>
+                    <template v-if="item.canDecide">
+                      <button class="text-button" :disabled="deciding" @click="decideApproval(item, true)">批准并执行</button>
+                      <button class="text-button danger-text" :disabled="deciding" @click="decideApproval(item, false)">拒绝</button>
+                    </template>
+                  </td>
+                </tr>
+                <tr v-if="openApproval?.id === item.id" class="approval-detail">
+                  <td colspan="7">
+                    <p v-if="openApproval.method || openApproval.description" class="muted">
+                      {{ openApproval.method }} · {{ openApproval.description }}
+                    </p>
+                    <h3>调用参数</h3>
+                    <pre>{{ JSON.stringify(openApproval.arguments, null, 2) }}</pre>
+                    <template v-if="openApproval.request">
+                      <h3>最终请求</h3>
+                      <pre>{{ openApproval.request.method }} {{ openApproval.request.url }}{{ openApproval.request.body ? "\n\n" + formattedBody(openApproval.request.body) : "" }}</pre>
+                    </template>
+                    <template v-if="openApproval.result">
+                      <h3>执行结果 · HTTP {{ openApproval.result.statusCode }} · {{ openApproval.result.durationMs }} ms</h3>
+                      <pre>{{ formattedBody(openApproval.result.body) }}</pre>
+                    </template>
+                    <div v-if="openApproval.error" class="alert error" role="alert">{{ openApproval.error }}</div>
+                    <p class="muted">
+                      有效期至 {{ date(openApproval.expiresAt) }}<template v-if="openApproval.decidedBy">，处理人 {{ openApproval.decidedBy }}<template v-if="openApproval.decidedAt">（{{ date(openApproval.decidedAt) }}）</template></template>
+                    </p>
+                  </td>
+                </tr>
+              </template>
+              <tr v-if="!approvals.length">
+                <td colspan="7" class="no-results">
+                  暂无审批单。为接口开启“调用审批”后，MCP 调用会在这里等待审批。
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
       </template>
       <template v-else-if="view === 'tokens'">
         <header class="page-header">

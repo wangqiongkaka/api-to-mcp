@@ -29,6 +29,10 @@ type Config struct {
 	AllowedOrigins []string
 	SecureCookies  bool
 	WebDist        string
+	// 审批通知：飞书群自定义机器人 Webhook、可选签名密钥，以及消息中链接使用的工作台地址。
+	FeishuWebhookURL    string
+	FeishuWebhookSecret string
+	PublicURL           string
 }
 
 type User struct {
@@ -69,6 +73,10 @@ type App struct {
 	client        *http.Client
 	limitMu       sync.Mutex
 	loginAttempts map[string]attempt
+	notifyClient  *http.Client
+	feishuWebhook string
+	feishuSecret  string
+	publicURL     string
 }
 
 const schema = `
@@ -123,6 +131,11 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		}
 		allowed[u.Scheme+"://"+strings.ToLower(u.Host)] = true
 	}
+	if cfg.FeishuWebhookURL != "" {
+		if u, err := url.Parse(cfg.FeishuWebhookURL); err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			return nil, fmt.Errorf("FEISHU_WEBHOOK_URL 必须是完整的 HTTP/HTTPS 地址")
+		}
+	}
 	cfg.AdminUsername = strings.ToLower(strings.TrimSpace(cfg.AdminUsername))
 	if !usernamePattern.MatchString(cfg.AdminUsername) || len(cfg.AdminPassword) < 12 || len(cfg.AdminPassword) > 72 {
 		return nil, fmt.Errorf("初始管理员用户名无效或密码长度不在 12–72 字节之间")
@@ -145,7 +158,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, schema); err != nil {
+	if _, err = tx.Exec(ctx, schema+approvalSchema); err != nil {
 		return nil, err
 	}
 	var exists bool
@@ -171,7 +184,9 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	transport.Proxy = nil
 	a := &App{db: db, cipher: aead, allowed: allowed, secureCookies: cfg.SecureCookies, webDist: cfg.WebDist,
 		loginAttempts: map[string]attempt{}, client: &http.Client{Transport: transport,
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		notifyClient: &http.Client{Timeout: 10 * time.Second}, feishuWebhook: cfg.FeishuWebhookURL,
+		feishuSecret: cfg.FeishuWebhookSecret, publicURL: strings.TrimRight(cfg.PublicURL, "/")}
 	ok = true
 	return a, nil
 }
@@ -197,17 +212,29 @@ func (a *App) encrypt(d Definition) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return a.seal(data)
+}
+
+func (a *App) seal(data []byte) ([]byte, error) {
 	nonce := randomBytes(a.cipher.NonceSize())
 	return a.cipher.Seal(nonce, nonce, data, nil), nil
 }
 
-func (a *App) decrypt(data []byte) (Definition, error) {
-	var d Definition
+func (a *App) unseal(data []byte) ([]byte, error) {
 	n := a.cipher.NonceSize()
 	if len(data) < n {
-		return d, errors.New("接口配置损坏")
+		return nil, errors.New("加密数据损坏")
 	}
 	plain, err := a.cipher.Open(nil, data[:n], data[n:], nil)
+	if err != nil {
+		return nil, errors.New("无法解密数据，请确认密钥未变更")
+	}
+	return plain, nil
+}
+
+func (a *App) decrypt(data []byte) (Definition, error) {
+	var d Definition
+	plain, err := a.unseal(data)
 	if err != nil {
 		return d, errors.New("无法解密接口配置，请确认密钥未变更")
 	}

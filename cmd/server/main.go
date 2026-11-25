@@ -36,7 +36,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	startup, cancel := context.WithTimeout(ctx, 15*time.Second)
-	a, err := platform.New(startup, platform.Config{DatabaseURL: os.Getenv("DATABASE_URL"), EncryptionKey: os.Getenv("ENCRYPTION_KEY"), AdminUsername: env("ADMIN_USERNAME", "admin"), AdminPassword: os.Getenv("ADMIN_PASSWORD"), AllowedOrigins: strings.Split(os.Getenv("UPSTREAM_ORIGINS"), ","), SecureCookies: os.Getenv("COOKIE_SECURE") == "true", WebDist: env("WEB_DIST", "web/dist")})
+	a, err := platform.New(startup, platform.Config{DatabaseURL: os.Getenv("DATABASE_URL"), EncryptionKey: os.Getenv("ENCRYPTION_KEY"), AdminUsername: env("ADMIN_USERNAME", "admin"), AdminPassword: os.Getenv("ADMIN_PASSWORD"), AllowedOrigins: strings.Split(os.Getenv("UPSTREAM_ORIGINS"), ","), SecureCookies: os.Getenv("COOKIE_SECURE") == "true", WebDist: env("WEB_DIST", "web/dist"), FeishuWebhookURL: os.Getenv("FEISHU_WEBHOOK_URL"), FeishuWebhookSecret: os.Getenv("FEISHU_WEBHOOK_SECRET"), PublicURL: os.Getenv("PUBLIC_URL")})
 	cancel()
 	if err != nil {
 		log.Fatal(err)

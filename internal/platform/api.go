@@ -49,6 +49,9 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/tools/{id}/call", a.requireUser(a.call))
 	mux.HandleFunc("POST /api/output-preview", a.requireUser(outputPreview))
 	mux.HandleFunc("GET /api/tools/{id}/export", a.requireUser(a.export))
+	mux.HandleFunc("GET /api/approvals", a.requireUser(a.approvals))
+	mux.HandleFunc("GET /api/approvals/{id}", a.requireUser(a.approval))
+	mux.HandleFunc("POST /api/approvals/{id}/decision", a.requireUser(a.decide))
 	mux.HandleFunc("GET /api/tokens", a.requireUser(a.tokens))
 	mux.HandleFunc("POST /api/tokens", a.requireUser(a.tokens))
 	mux.HandleFunc("DELETE /api/tokens/{id}", a.requireUser(a.tokens))
@@ -86,7 +89,7 @@ func (a *App) tools(w http.ResponseWriter, r *http.Request) {
 			if t.manageableBy(u) {
 				continue
 			}
-			visible := Definition{Name: t.mcpName(u.ID), Description: t.Description, Method: t.Method, WholeBody: t.WholeBody, Parameters: []Parameter{}}
+			visible := Definition{Name: t.mcpName(u.ID), Description: t.Description, Method: t.Method, WholeBody: t.WholeBody, Parameters: []Parameter{}, Approval: t.Approval}
 			for _, p := range t.Parameters {
 				if !p.Fixed {
 					p.Value = ""
@@ -102,7 +105,12 @@ func (a *App) tools(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &d) {
 		return
 	}
+	d.Approval.normalize()
 	if err := d.Validate(); err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	if err := a.checkApprover(r.Context(), d); err != nil {
 		fail(w, 400, err.Error())
 		return
 	}
@@ -168,7 +176,12 @@ func (a *App) tool(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &d) {
 		return
 	}
+	d.Approval.normalize()
 	if err := d.Validate(); err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	if err := a.checkApprover(r.Context(), d); err != nil {
 		fail(w, 400, err.Error())
 		return
 	}
@@ -275,6 +288,10 @@ func (a *App) call(w http.ResponseWriter, r *http.Request) {
 	args, err := record.Definition.decodeArguments(input.Arguments)
 	if err != nil || args == nil {
 		fail(w, 400, "arguments 必须是 JSON 对象，无参数时传入空对象")
+		return
+	}
+	if record.Approval != nil && !record.manageableBy(currentUser(r)) {
+		fail(w, 403, "该接口需审批后执行，请通过 MCP 调用提交审批")
 		return
 	}
 	if input.Raw && record.manageableBy(currentUser(r)) {
