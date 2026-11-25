@@ -489,5 +489,10 @@ test("开启调用审批后由页面批准并执行 MCP 调用", async ({ page }
   await expect(page.locator(".approval-detail")).toContainText("执行结果 · HTTP 200");
   await expect(page.locator(".approval-detail")).toContainText('"podIp": "10.60.144.190"');
   await expect(page.getByRole("button", { name: "批准并执行" })).toHaveCount(0);
+  await page.getByRole("button", { name: "接口库", exact: true }).click();
+  await page.goto("/#approvals");
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "审批", exact: true })).toBeVisible();
+  await expect(page.getByText("已执行", { exact: true })).toBeVisible();
   expect(consoleErrors).toEqual([]);
 });

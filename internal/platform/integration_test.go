@@ -3,6 +3,8 @@ package platform
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -507,7 +509,8 @@ func TestPlatformIntegration(t *testing.T) {
 			select {
 			case notice := <-notices:
 				text, _ := json.Marshal(notice)
-				if notice["sign"] == "" || !strings.Contains(string(text), fmt.Sprintf("#%d", out.ApprovalID)) || !strings.Contains(string(text), "https://workbench.example/#approvals") ||
+				mac := hmac.New(sha256.New, []byte(fmt.Sprint(notice["timestamp"])+"\nsign-secret"))
+				if notice["sign"] != base64.StdEncoding.EncodeToString(mac.Sum(nil)) || !strings.Contains(string(text), fmt.Sprintf("#%d", out.ApprovalID)) || !strings.Contains(string(text), "https://workbench.example/#approvals") ||
 					strings.Contains(string(text), "192.0.2.") || strings.Contains(string(text), upstream.URL) || strings.Contains(string(text), "private-upstream-secret") {
 					t.Fatalf("飞书通知内容不符合预期：%s", text)
 				}
@@ -531,14 +534,14 @@ func TestPlatformIntegration(t *testing.T) {
 		}
 		var items []Approval
 		check(alice, "GET", "/api/approvals", nil, &items, 200)
-		if len(items) != 1 || items[0].Status != "pending" || items[0].CanDecide || items[0].Approver != "bob" || items[0].Arguments != nil {
+		if len(items) != 1 || items[0].Status != "pending" || items[0].CanDecide || items[0].Approver != "bob" || items[0].Arguments != nil || items[0].Result != nil {
 			t.Fatalf("申请人看到的审批单错误：%+v", items)
 		}
 		decide(alice, first, true, 409)
 		decide(admin, first, true, 404)
 		var detail Approval
 		check(bob, "GET", fmt.Sprintf("/api/approvals/%d", first), nil, &detail, 200)
-		if !detail.CanDecide || !strings.Contains(string(detail.Arguments), "192.0.2.9") || detail.Request != nil {
+		if !detail.CanDecide || !strings.Contains(string(detail.Arguments), "192.0.2.9") || detail.Request != nil || detail.Method != "POST" || detail.Purpose != write.Description {
 			t.Fatalf("审批人详情错误：%+v", detail)
 		}
 		check(alice, "GET", fmt.Sprintf("/api/approvals/%d", first), nil, &detail, 200)
@@ -585,6 +588,15 @@ func TestPlatformIntegration(t *testing.T) {
 		if item := decide(alice, own, true, 200); item.Status != "executed" || approvedCalls.Load() != 3 {
 			t.Fatalf("本人审批未执行：%+v", item)
 		}
+		check(alice, "POST", toolPath+"/publish", map[string]bool{"published": false}, nil, 200)
+		unmapped := write
+		unmapped.OutputFields = []OutputField{{Name: "missing", Source: "response", Value: "/missing"}}
+		check(alice, "PUT", toolPath, unmapped, nil, 200)
+		check(alice, "POST", toolPath+"/publish", map[string]bool{"published": true}, nil, 200)
+		sent := submit(session, write.Name, map[string]any{"host_ip": "192.0.2.16"})
+		if item := decide(alice, sent, true, 200); item.Status != "unknown" || !strings.Contains(item.Error, "结果未知") || strings.Contains(item.Error, "未执行") || approvedCalls.Load() != 4 {
+			t.Fatalf("请求发出后的失败应标为结果未知：%+v，上游 %d 次", item, approvedCalls.Load())
+		}
 
 		shared := write
 		shared.Name, shared.Approval = "sharedWrite", &ApprovalRule{Approver: "admin"}
@@ -603,7 +615,7 @@ func TestPlatformIntegration(t *testing.T) {
 		}
 		adminTicket := submit(bobSession, fmt.Sprintf("sharedWrite.public.%d", sharedRecord.ID), map[string]any{"host_ip": "192.0.2.15"})
 		decide(bob, adminTicket, true, 409)
-		if item := decide(admin, adminTicket, true, 200); item.Status != "executed" || item.Approver != "管理员" || item.DecidedBy != "admin" || approvedCalls.Load() != 4 {
+		if item := decide(admin, adminTicket, true, 200); item.Status != "executed" || item.Approver != "管理员" || item.DecidedBy != "admin" || approvedCalls.Load() != 5 {
 			t.Fatalf("管理员审批未执行：%+v", item)
 		}
 		var stored []byte

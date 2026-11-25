@@ -38,9 +38,11 @@ export interface Approval {
   id: number;
   toolId: number | null;
   toolName: string;
+  method?: string;
+  description?: string;
   requester: string;
   approver: string;
-  status: "pending" | "expired" | "rejected" | "executing" | "executed" | "failed";
+  status: "pending" | "expired" | "rejected" | "executing" | "executed" | "upstream_error" | "unknown" | "failed";
   canDecide: boolean;
   decidedBy?: string;
   createdAt: string;

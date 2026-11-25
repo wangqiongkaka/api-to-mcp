@@ -28,7 +28,9 @@ const approvalStatus: Record<Approval["status"], [string, string]> = {
   rejected: ["已拒绝", "neutral"],
   executing: ["执行中，结果未知", "warning"],
   executed: ["已执行", "success"],
-  failed: ["未执行成功", "failure"],
+  upstream_error: ["已执行，上游返回错误", "failure"],
+  unknown: ["结果未知", "warning"],
+  failed: ["未执行", "failure"],
 };
 const allowedOrigins = ref<string[]>([]);
 const search = ref("");
@@ -309,8 +311,12 @@ async function decideApproval(item: Approval, approve: boolean) {
     });
     openApproval.value = detail;
     await loadApprovals();
-    notify(detail.status === "executed" ? "已批准，接口已执行，结果已保存"
-      : detail.status === "failed" ? "已批准，但接口未执行成功，请查看原因" : "已拒绝该审批单");
+    notify({
+      executed: "已批准，接口已执行，结果已保存",
+      upstream_error: "已批准并执行，上游返回错误，请查看结果",
+      unknown: "请求已发出但结果未知，请到上游核实",
+      failed: "已批准，但接口未执行，请查看原因",
+    }[detail.status as string] ?? "已拒绝该审批单");
   } catch (e) {
     error.value = message(e);
     await loadApprovals().catch(() => undefined);
@@ -1563,6 +1569,9 @@ onUnmounted(() => {
                 </tr>
                 <tr v-if="openApproval?.id === item.id" class="approval-detail">
                   <td colspan="7">
+                    <p v-if="openApproval.method || openApproval.description" class="muted">
+                      {{ openApproval.method }} · {{ openApproval.description }}
+                    </p>
                     <h3>调用参数</h3>
                     <pre>{{ JSON.stringify(openApproval.arguments, null, 2) }}</pre>
                     <template v-if="openApproval.request">

@@ -733,7 +733,7 @@ tbody tr:last-child td {
   background: #fff0f3;
   color: #b83246;
 }
-.badge + .badge {
+.tool-table .badge + .badge {
   margin-left: 6px;
 }
 .badge.warning {
@@ -759,6 +759,9 @@ tbody tr:last-child td {
 }
 .approval-detail td {
   background: #f9fafc;
+}
+.approval-detail td > p:first-child {
+  margin: 0 0 12px;
 }
 .approval-detail h3 {
   margin: 0 0 6px;

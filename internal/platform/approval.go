@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS approvals (
  requester_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
  approver_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
  definition_hash BYTEA NOT NULL, arguments BYTEA NOT NULL,
- status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','rejected','executing','executed','failed')),
+ status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','rejected','executing','executed','upstream_error','unknown','failed')),
  outcome BYTEA, decided_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), expires_at TIMESTAMPTZ NOT NULL,
  decided_at TIMESTAMPTZ, finished_at TIMESTAMPTZ
@@ -125,6 +125,8 @@ type Approval struct {
 	ID         int64      `json:"id"`
 	ToolID     *int64     `json:"toolId"`
 	ToolName   string     `json:"toolName"`
+	Method     string     `json:"method,omitempty"`
+	Purpose    string     `json:"description,omitempty"`
 	Requester  string     `json:"requester"`
 	Approver   string     `json:"approver"`
 	Status     string     `json:"status"`
@@ -150,12 +152,28 @@ type requestPreview struct {
 type approvalOutcome struct {
 	Result *CallResult `json:"result,omitempty"`
 	Error  string      `json:"error,omitempty"`
+	// Sent 表示请求已发往上游；此后出错时写操作可能已生效。
+	Sent bool `json:"-"`
 }
 
+// status 区分未执行、上游已执行但结果未知、上游返回错误和成功执行。
+func (o approvalOutcome) status() string {
+	switch {
+	case !o.Sent:
+		return "failed"
+	case o.Error != "":
+		return "unknown"
+	case o.Result.StatusCode < 200 || o.Result.StatusCode >= 300:
+		return "upstream_error"
+	}
+	return "executed"
+}
+
+// 列表不读取加密的参数与结果，只在详情中读取。
 const approvalColumns = `SELECT a.id,a.tool_id,a.tool_name,r.username,COALESCE(p.username,'管理员'),
  CASE WHEN a.status='pending' AND a.expires_at<=now() THEN 'expired' ELSE a.status END,
  COALESCE(a.status='pending' AND a.expires_at>now() AND (a.approver_id=$1 OR (a.approver_id IS NULL AND $2)),false),
- COALESCE(d.username,''),a.created_at,a.expires_at,a.decided_at,a.finished_at,a.arguments,a.outcome
+ COALESCE(d.username,''),a.created_at,a.expires_at,a.decided_at,a.finished_at,%s
  FROM approvals a JOIN users r ON r.id=a.requester_id LEFT JOIN users p ON p.id=a.approver_id LEFT JOIN users d ON d.id=a.decided_by
  WHERE (a.requester_id=$1 OR a.approver_id=$1 OR (a.approver_id IS NULL AND $2))`
 
@@ -172,7 +190,7 @@ func scanApproval(row scanner) (Approval, []byte, []byte, error) {
 func (a *App) approvals(w http.ResponseWriter, r *http.Request) {
 	u := currentUser(r)
 	// ponytail: 只返回最近 200 条，需要翻页时再加游标。
-	rows, err := a.db.Query(r.Context(), approvalColumns+" ORDER BY a.id DESC LIMIT 200", u.ID, u.Role == "admin")
+	rows, err := a.db.Query(r.Context(), fmt.Sprintf(approvalColumns, "NULL::bytea,NULL::bytea")+" ORDER BY a.id DESC LIMIT 200", u.ID, u.Role == "admin")
 	if err != nil {
 		fail(w, 500, "读取审批单失败")
 		return
@@ -196,7 +214,7 @@ func (a *App) approvals(w http.ResponseWriter, r *http.Request) {
 
 // approvalDetail 返回冻结参数、执行结果；只有接口管理者能看到最终请求地址与正文。
 func (a *App) approvalDetail(ctx context.Context, id int64, u User) (Approval, error) {
-	item, args, outcome, err := scanApproval(a.db.QueryRow(ctx, approvalColumns+" AND a.id=$3", u.ID, u.Role == "admin", id))
+	item, args, outcome, err := scanApproval(a.db.QueryRow(ctx, fmt.Sprintf(approvalColumns, "a.arguments,a.outcome")+" AND a.id=$3", u.ID, u.Role == "admin", id))
 	if err != nil {
 		return item, err
 	}
@@ -215,6 +233,10 @@ func (a *App) approvalDetail(ctx context.Context, id int64, u User) (Approval, e
 		item.Result, item.Error = o.Result, o.Error
 	}
 	if item.ToolID != nil {
+		// 方法和用途描述对能看到审批单的人公开；最终请求只给接口维护者。
+		if tool, err := a.getTool(ctx, *item.ToolID, User{Role: "admin"}, false); err == nil {
+			item.Method, item.Purpose = tool.Method, tool.Description
+		}
 		if tool, err := a.getTool(ctx, *item.ToolID, u, false); err == nil && tool.manageableBy(u) {
 			var values map[string]any
 			if json.Unmarshal(item.Arguments, &values) == nil {
@@ -294,10 +316,7 @@ func (a *App) decide(w http.ResponseWriter, r *http.Request) {
 		// 审批人关闭页面也不能中断已开始的写请求。
 		ctx := context.WithoutCancel(r.Context())
 		outcome := a.runApproval(ctx, toolID, requesterID, hash, sealed)
-		status := "executed"
-		if outcome.Error != "" {
-			status = "failed"
-		}
+		status := outcome.status()
 		data, _ := json.Marshal(outcome)
 		stored, err := a.seal(data)
 		if err == nil {
@@ -343,11 +362,14 @@ func (a *App) runApproval(ctx context.Context, toolID *int64, requesterID int64,
 	if err != nil {
 		return approvalOutcome{Error: "审批参数无法读取，未执行"}
 	}
+	if _, err := a.prepare(tool.Definition, args); err != nil {
+		return approvalOutcome{Error: err.Error() + "，未执行"}
+	}
 	result, err := a.execute(ctx, tool.Definition, args)
 	if err != nil {
-		return approvalOutcome{Error: err.Error()}
+		return approvalOutcome{Sent: true, Error: "请求已发往上游，结果未知：" + err.Error() + "。请到上游核实，不要直接重新提交"}
 	}
-	return approvalOutcome{Result: &result}
+	return approvalOutcome{Sent: true, Result: &result}
 }
 
 type approvalNotice struct {
