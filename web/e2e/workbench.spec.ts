@@ -446,3 +446,48 @@ test("至少填写一个指定筛选参数才能调试", async ({ page }, testIn
   await expect(trial.getByRole("heading", { name: "调试" })).toBeInViewport();
   await page.screenshot({ path: testInfo.outputPath("editor-flow-mobile.png") });
 });
+
+test("开启调用审批后由页面批准并执行 MCP 调用", async ({ page }) => {
+  const consoleErrors: string[] = [];
+  page.on("pageerror", (error) => consoleErrors.push(error.message));
+  await page.goto("/");
+  await registerMember(page);
+  await page.getByRole("button", { name: "使用 Pod 查询示例" }).click();
+  await page.getByLabel("接口地址", { exact: true }).fill("http://127.0.0.1:8099/pods");
+  await page.getByLabel("MCP 调用需审批").check();
+  await page.getByRole("combobox", { name: /^审批人/ }).selectOption({ label: "指定用户" });
+  await page.getByLabel("审批人用户名").fill("nobody_here");
+  await page.getByRole("button", { name: "保存草稿" }).click();
+  await expect(page.getByRole("alert")).toContainText("审批人 nobody_here 不存在或已停用");
+  await page.getByRole("combobox", { name: /^审批人/ }).selectOption({ label: "调用者本人" });
+  await page.getByRole("button", { name: "保存草稿" }).click();
+  await expect(page.getByRole("button", { name: "发布工具" })).toBeEnabled();
+  await expect(page.getByText("调试请求由维护者直接发送，不经过审批。")).toBeVisible();
+  await page.getByRole("button", { name: "发布工具" }).click();
+  await expect(page.getByRole("button", { name: "停用工具" })).toBeVisible();
+  await page.getByRole("button", { name: "返回接口库" }).click();
+  await expect(page.locator(".tool-table")).toContainText("需审批");
+
+  const token = await page.evaluate(async () => {
+    const response = await fetch("/api/tokens", { method: "POST", headers: { "Content-Type": "application/json" }, body: '{"name":"approval"}' });
+    return (await response.json()).token as string;
+  });
+  const submitted = await page.request.post("/mcp", {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json, text/event-stream" },
+    data: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "getPodInstance", arguments: { podIp: "10.60.144.190" } } },
+  });
+  expect((await submitted.json()).result.content[0].text).toContain("尚未执行");
+
+  await page.getByRole("button", { name: /^✓?审批/ }).click();
+  await expect(page.getByRole("heading", { name: "审批", exact: true })).toBeVisible();
+  await expect(page.getByText("待审批", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "详情" }).click();
+  await expect(page.locator(".approval-detail pre").first()).toContainText('"podIp": "10.60.144.190"');
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "批准并执行" }).click();
+  await expect(page.getByText("已执行", { exact: true })).toBeVisible();
+  await expect(page.locator(".approval-detail")).toContainText("执行结果 · HTTP 200");
+  await expect(page.locator(".approval-detail")).toContainText('"podIp": "10.60.144.190"');
+  await expect(page.getByRole("button", { name: "批准并执行" })).toHaveCount(0);
+  expect(consoleErrors).toEqual([]);
+});

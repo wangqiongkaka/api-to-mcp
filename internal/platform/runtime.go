@@ -22,14 +22,23 @@ type CallResult struct {
 	OutputMapped bool   `json:"outputMapped,omitempty"`
 }
 
-func (a *App) execute(ctx context.Context, d Definition, args map[string]any) (CallResult, error) {
-	var result CallResult
+// prepare 构造上游请求并确认目标源地址已获准访问。
+func (a *App) prepare(d Definition, args map[string]any) (*http.Request, error) {
 	request, err := d.BuildRequest(args)
 	if err != nil {
-		return result, err
+		return nil, err
 	}
 	if !a.allowed[request.URL.Scheme+"://"+strings.ToLower(request.URL.Host)] {
-		return result, fmt.Errorf("该上游地址未获准访问，请联系管理员配置 UPSTREAM_ORIGINS")
+		return nil, fmt.Errorf("该上游地址未获准访问，请联系管理员配置 UPSTREAM_ORIGINS")
+	}
+	return request, nil
+}
+
+func (a *App) execute(ctx context.Context, d Definition, args map[string]any) (CallResult, error) {
+	var result CallResult
+	request, err := a.prepare(d, args)
+	if err != nil {
+		return result, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(d.TimeoutSeconds)*time.Second)
 	defer cancel()
@@ -86,8 +95,11 @@ func (a *App) serveMCP(w http.ResponseWriter, r *http.Request) {
 	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "api-to-mcp", Version: "0.1.0"}, nil)
 	for _, record := range tools {
-		id, name := record.ID, record.mcpName(user.ID)
-		server.AddTool(&mcp.Tool{Name: name, Description: record.Description, InputSchema: record.InputSchema()}, func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		id, name, description := record.ID, record.mcpName(user.ID), record.Description
+		if record.Approval != nil {
+			description += "\n\n调用需审批：提交后不会立即执行，审批通过后由平台执行并保存结果。"
+		}
+		server.AddTool(&mcp.Tool{Name: name, Description: description, InputSchema: record.InputSchema()}, func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			tool, err := a.getTool(ctx, id, User{ID: user.ID}, true)
 			if err != nil || !tool.Published || tool.mcpName(user.ID) != name {
 				return toolError("工具不存在或已停用"), nil
@@ -97,6 +109,9 @@ func (a *App) serveMCP(w http.ResponseWriter, r *http.Request) {
 				if args, err = tool.Definition.decodeArguments(request.Params.Arguments); err != nil || args == nil {
 					return toolError("工具参数必须是 JSON 对象"), nil
 				}
+			}
+			if tool.Approval != nil {
+				return a.submitApproval(ctx, user, tool, args), nil
 			}
 			result, err := a.execute(ctx, tool.Definition, args)
 			if err != nil {

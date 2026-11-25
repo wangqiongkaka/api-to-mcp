@@ -87,10 +87,13 @@ func TestPlatformIntegration(t *testing.T) {
 	query := u.Query()
 	query.Set("search_path", namespace)
 	u.RawQuery = query.Encode()
-	var guardedCalls atomic.Int32
+	var guardedCalls, approvedCalls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/guarded" {
 			guardedCalls.Add(1)
+		}
+		if r.URL.Path == "/approved" {
+			approvedCalls.Add(1)
 		}
 		if r.Header.Get("X-API-Key") != "private-upstream-secret" {
 			http.Error(w, "missing secret", 401)
@@ -116,7 +119,15 @@ func TestPlatformIntegration(t *testing.T) {
 		writeJSON(w, 200, map[string]any{"podIp": r.URL.Query().Get("podIp"), "showAllPods": r.URL.Query().Get("showAllPods")})
 	}))
 	defer upstream.Close()
-	cfg := Config{DatabaseURL: u.String(), EncryptionKey: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)), AdminUsername: "ADMIN", AdminPassword: "integration-admin-password", AllowedOrigins: []string{upstream.URL}, WebDist: t.TempDir()}
+	notices := make(chan map[string]any, 20)
+	feishu := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var message map[string]any
+		json.NewDecoder(r.Body).Decode(&message)
+		notices <- message
+		writeJSON(w, 200, map[string]any{"code": 0})
+	}))
+	defer feishu.Close()
+	cfg := Config{FeishuWebhookURL: feishu.URL + "/hook", FeishuWebhookSecret: "sign-secret", PublicURL: "https://workbench.example/", DatabaseURL: u.String(), EncryptionKey: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)), AdminUsername: "ADMIN", AdminPassword: "integration-admin-password", AllowedOrigins: []string{upstream.URL}, WebDist: t.TempDir()}
 	a, err := New(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -452,6 +463,157 @@ func TestPlatformIntegration(t *testing.T) {
 		want, _ = json.Marshal(`{"queryParams":[{"owner":["owner"]}]}`)
 		if err != nil || result.IsError || !strings.Contains(result.Content[0].(*mcp.TextContent).Text, string(want)) || guardedCalls.Load() != 2 {
 			t.Fatalf("MCP 应只转发负责人条件：%+v，%v，上游收到 %d 次调用", result, err, guardedCalls.Load())
+		}
+	})
+	t.Run("开启审批的接口由审批人批准后由平台执行一次", func(t *testing.T) {
+		check := func(c *http.Client, method, path string, body, out any, want int) {
+			t.Helper()
+			if got := jsonRequest(t, c, method, server.URL+path, body, out); got != want {
+				t.Fatalf("%s %s 返回 %d，预期 %d", method, path, got, want)
+			}
+		}
+		write := d
+		write.Name, write.Method, write.URL, write.Description = "approvedWrite", "POST", upstream.URL+"/approved", "删除主机记录"
+		write.Parameters = []Parameter{{Name: "host_ip", In: "body", Type: "string", Required: true}, d.Parameters[len(d.Parameters)-1]}
+		write.Approval = &ApprovalRule{Approver: "self", ApproverName: "bob"}
+		check(alice, "POST", "/api/tools", write, nil, 400)
+		write.Approval = &ApprovalRule{Approver: "user", ApproverName: "nobody"}
+		check(alice, "POST", "/api/tools", write, nil, 400)
+		write.Approval = &ApprovalRule{Approver: "user", ApproverName: " BOB "}
+		var record ToolRecord
+		check(alice, "POST", "/api/tools", write, &record, 201)
+		if record.Approval == nil || record.Approval.ApproverName != "bob" {
+			t.Fatalf("审批人未规范化：%+v", record.Approval)
+		}
+		toolPath := fmt.Sprintf("/api/tools/%d", record.ID)
+		check(alice, "POST", toolPath+"/publish", map[string]bool{"published": true}, nil, 200)
+		list, err := session.ListTools(ctx, nil)
+		if err != nil || !slices.ContainsFunc(list.Tools, func(tool *mcp.Tool) bool {
+			return tool.Name == write.Name && strings.Contains(tool.Description, "调用需审批")
+		}) {
+			t.Fatalf("MCP 工具描述未提示审批：%v", err)
+		}
+		submit := func(s *mcp.ClientSession, name string, args map[string]any) int64 {
+			t.Helper()
+			result, err := s.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+			if err != nil || result.IsError || !strings.Contains(result.Content[0].(*mcp.TextContent).Text, "尚未执行") {
+				t.Fatalf("提交审批失败：%+v，%v", result, err)
+			}
+			var out struct{ ApprovalID int64 }
+			data, _ := json.Marshal(result.StructuredContent)
+			if json.Unmarshal(data, &out) != nil || out.ApprovalID == 0 {
+				t.Fatalf("缺少审批单号：%s", data)
+			}
+			select {
+			case notice := <-notices:
+				text, _ := json.Marshal(notice)
+				if notice["sign"] == "" || !strings.Contains(string(text), fmt.Sprintf("#%d", out.ApprovalID)) || !strings.Contains(string(text), "https://workbench.example/#approvals") ||
+					strings.Contains(string(text), "192.0.2.") || strings.Contains(string(text), upstream.URL) || strings.Contains(string(text), "private-upstream-secret") {
+					t.Fatalf("飞书通知内容不符合预期：%s", text)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("未收到飞书通知")
+			}
+			return out.ApprovalID
+		}
+		decide := func(c *http.Client, id int64, approve bool, want int) Approval {
+			t.Helper()
+			var item Approval
+			check(c, "POST", fmt.Sprintf("/api/approvals/%d/decision", id), map[string]bool{"approve": approve}, &item, want)
+			return item
+		}
+		if result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: write.Name, Arguments: map[string]any{}}); err != nil || !result.IsError {
+			t.Fatal("参数无效时不应生成审批单")
+		}
+		first := submit(session, write.Name, map[string]any{"host_ip": "192.0.2.9"})
+		if approvedCalls.Load() != 0 {
+			t.Fatal("提交审批时已访问上游")
+		}
+		var items []Approval
+		check(alice, "GET", "/api/approvals", nil, &items, 200)
+		if len(items) != 1 || items[0].Status != "pending" || items[0].CanDecide || items[0].Approver != "bob" || items[0].Arguments != nil {
+			t.Fatalf("申请人看到的审批单错误：%+v", items)
+		}
+		decide(alice, first, true, 409)
+		decide(admin, first, true, 404)
+		var detail Approval
+		check(bob, "GET", fmt.Sprintf("/api/approvals/%d", first), nil, &detail, 200)
+		if !detail.CanDecide || !strings.Contains(string(detail.Arguments), "192.0.2.9") || detail.Request != nil {
+			t.Fatalf("审批人详情错误：%+v", detail)
+		}
+		check(alice, "GET", fmt.Sprintf("/api/approvals/%d", first), nil, &detail, 200)
+		if detail.Request == nil || detail.Request.URL != upstream.URL+"/approved" || !strings.Contains(detail.Request.Body, "192.0.2.9") {
+			t.Fatalf("接口维护者应看到最终请求：%+v", detail.Request)
+		}
+		done := decide(bob, first, true, 200)
+		if done.Status != "executed" || done.Result == nil || done.Result.StatusCode != 200 || !strings.Contains(done.Result.Body, "192.0.2.9") || approvedCalls.Load() != 1 {
+			t.Fatalf("批准后执行结果错误：%+v，上游 %d 次", done, approvedCalls.Load())
+		}
+		decide(bob, first, true, 409)
+		decide(bob, first, false, 409)
+
+		rejected := submit(session, write.Name, map[string]any{"host_ip": "192.0.2.10"})
+		if item := decide(bob, rejected, false, 200); item.Status != "rejected" {
+			t.Fatalf("拒绝状态错误：%+v", item)
+		}
+		expired := submit(session, write.Name, map[string]any{"host_ip": "192.0.2.11"})
+		if _, err := a.db.Exec(ctx, "UPDATE approvals SET expires_at=now()-interval '1 second' WHERE id=$1", expired); err != nil {
+			t.Fatal(err)
+		}
+		decide(bob, expired, true, 409)
+		check(bob, "GET", fmt.Sprintf("/api/approvals/%d", expired), nil, &detail, 200)
+		if detail.Status != "expired" || detail.CanDecide {
+			t.Fatalf("过期状态错误：%+v", detail)
+		}
+
+		republished := submit(session, write.Name, map[string]any{"host_ip": "192.0.2.12"})
+		changed := submit(session, write.Name, map[string]any{"host_ip": "192.0.2.13"})
+		check(alice, "POST", toolPath+"/publish", map[string]bool{"published": false}, nil, 200)
+		check(alice, "POST", toolPath+"/publish", map[string]bool{"published": true}, nil, 200)
+		if item := decide(bob, republished, true, 200); item.Status != "executed" || approvedCalls.Load() != 2 {
+			t.Fatalf("仅重新发布不应使审批单失效：%+v", item)
+		}
+		check(alice, "POST", toolPath+"/publish", map[string]bool{"published": false}, nil, 200)
+		write.Approval = &ApprovalRule{Approver: "self"}
+		check(alice, "PUT", toolPath, write, nil, 200)
+		check(alice, "POST", toolPath+"/publish", map[string]bool{"published": true}, nil, 200)
+		if item := decide(bob, changed, true, 200); item.Status != "failed" || !strings.Contains(item.Error, "已修改") || approvedCalls.Load() != 2 {
+			t.Fatalf("配置修改后不应执行：%+v", item)
+		}
+		own := submit(session, write.Name, map[string]any{"host_ip": "192.0.2.14"})
+		decide(bob, own, true, 404)
+		if item := decide(alice, own, true, 200); item.Status != "executed" || approvedCalls.Load() != 3 {
+			t.Fatalf("本人审批未执行：%+v", item)
+		}
+
+		shared := write
+		shared.Name, shared.Approval = "sharedWrite", &ApprovalRule{Approver: "admin"}
+		var sharedRecord ToolRecord
+		check(admin, "POST", "/api/tools", shared, &sharedRecord, 201)
+		sharedPath := fmt.Sprintf("/api/tools/%d", sharedRecord.ID)
+		check(admin, "PATCH", sharedPath+"/visibility", map[string]bool{"public": true}, nil, 200)
+		check(admin, "POST", sharedPath+"/publish", map[string]bool{"published": true}, nil, 200)
+		check(bob, "POST", sharedPath+"/call", map[string]any{"arguments": map[string]any{"host_ip": "192.0.2.15"}}, nil, 403)
+		var bobTools []ToolRecord
+		check(bob, "GET", "/api/tools", nil, &bobTools, 200)
+		if !slices.ContainsFunc(bobTools, func(item ToolRecord) bool {
+			return item.ID == sharedRecord.ID && item.Approval != nil && item.URL == ""
+		}) {
+			t.Fatal("公共接口未向调用者标明需审批")
+		}
+		adminTicket := submit(bobSession, fmt.Sprintf("sharedWrite.public.%d", sharedRecord.ID), map[string]any{"host_ip": "192.0.2.15"})
+		decide(bob, adminTicket, true, 409)
+		if item := decide(admin, adminTicket, true, 200); item.Status != "executed" || item.Approver != "管理员" || item.DecidedBy != "admin" || approvedCalls.Load() != 4 {
+			t.Fatalf("管理员审批未执行：%+v", item)
+		}
+		var stored []byte
+		if err := a.db.QueryRow(ctx, "SELECT arguments FROM approvals WHERE id=$1", adminTicket).Scan(&stored); err != nil || bytes.Contains(stored, []byte("192.0.2.15")) {
+			t.Fatalf("审批参数明文落库：%v", err)
+		}
+		check(alice, "DELETE", toolPath, nil, nil, 200)
+		check(alice, "GET", fmt.Sprintf("/api/approvals/%d", own), nil, &detail, 200)
+		if detail.ToolName != write.Name || detail.ToolID != nil {
+			t.Fatalf("删除接口后审批记录丢失：%+v", detail)
 		}
 	})
 	if code := jsonRequest(t, alice, "DELETE", fmt.Sprintf("%s/api/tokens/%d", server.URL, token.ID), nil, nil); code != 200 {

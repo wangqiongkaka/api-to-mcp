@@ -26,6 +26,31 @@ export interface Definition {
   bodyTemplate?: string;
   parameters: Parameter[];
   outputFields?: OutputField[];
+  approval?: ApprovalRule;
+}
+
+export interface ApprovalRule {
+  approver: "self" | "admin" | "user";
+  approverName?: string;
+}
+
+export interface Approval {
+  id: number;
+  toolId: number | null;
+  toolName: string;
+  requester: string;
+  approver: string;
+  status: "pending" | "expired" | "rejected" | "executing" | "executed" | "failed";
+  canDecide: boolean;
+  decidedBy?: string;
+  createdAt: string;
+  expiresAt: string;
+  decidedAt?: string;
+  finishedAt?: string;
+  arguments?: unknown;
+  request?: { method: string; url: string; body?: string };
+  result?: CallResult;
+  error?: string;
 }
 
 export interface OutputField {
@@ -105,5 +130,6 @@ export function definitionOf(d: Definition): Definition {
     bodyTemplate: d.bodyTemplate,
     parameters: d.parameters.map((p) => ({ ...p })),
     outputFields: d.outputFields?.length ? d.outputFields.map((field) => ({ ...field })) : undefined,
+    approval: d.approval ? { ...d.approval } : undefined,
   };
 }
