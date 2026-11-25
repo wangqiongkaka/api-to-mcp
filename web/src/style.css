@@ -745,6 +745,16 @@ tbody tr:last-child td {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
 }
+.form-content .approval-settings label {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+.approval-settings label > :is(select, input) {
+  flex: 1;
+  min-width: 0;
+}
 .form-content .check-label {
   flex-direction: row;
   align-items: center;
