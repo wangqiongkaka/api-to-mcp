@@ -1001,6 +1001,10 @@ tbody tr:last-child td {
 .parameter-table td.checkbox-cell {
   padding-top: 22px;
 }
+.parameter-table td > .muted {
+  display: block;
+  line-height: 35px;
+}
 .parameter-table input[type="checkbox"] {
   width: 15px;
   margin: 0;
