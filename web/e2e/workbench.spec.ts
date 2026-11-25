@@ -403,6 +403,11 @@ test("至少填写一个指定筛选参数才能调试", async ({ page }, testIn
   await admin.check();
   await page.getByLabel("参数 2 映射方式").selectOption({ label: "固定值" });
   await expect(admin).toBeDisabled();
+  const noInput = admin.locator("xpath=ancestor::tr").getByText("无需填写", { exact: true });
+  await admin.locator("xpath=ancestor::tr").screenshot({ path: testInfo.outputPath("fixed-requirement-row.png") });
+  const adminBox = (await admin.boundingBox())!;
+  const noInputBox = (await noInput.boundingBox())!;
+  expect(Math.abs(noInputBox.y + noInputBox.height / 2 - adminBox.y - adminBox.height / 2)).toBeLessThan(2);
   await page.getByLabel("参数 2 映射方式").selectOption({ label: "客户端填写" });
   await expect(admin).not.toBeChecked();
   await admin.check();
