@@ -546,11 +546,59 @@ test("管理员配置 Grafana 连接并创建多条查询工具与调试发布",
   await page.getByLabel("用途描述").fill("按主机 IP 联合查询 Prometheus 指标和 VictoriaLogs 日志");
   await page.getByLabel("Grafana 连接", { exact: true }).selectOption({ label: `${connName}（http://127.0.0.1:8099）` });
   await expect(page.getByLabel("查询 1 数据源")).toContainText("Prometheus Main");
+  await expect(page.getByLabel("查询 A 数据类型")).toHaveValue("metrics");
 
   await page.getByLabel("查询 A 语句").fill('up{instance=~"{{host_ip}}.*"}');
   await page.getByRole("button", { name: /添加查询/ }).click();
   await page.getByLabel("查询 2 数据源").selectOption("vmlogs-main");
+  await expect(page.getByLabel("查询 B 数据类型")).toHaveValue("logs");
   await page.getByLabel("查询 B 语句").fill('host:"{{host_ip}}" AND env:"{{env}}"');
+
+  // 为 Logs 查询配置阿里云 SLS 风格处理器链：划选生成正则 -> JSON 展开 -> 拆数组为多行 -> 保留字段
+  await page.getByText("日志处理（JSON / 正则 / 拆数组 / 字段过滤）").click();
+  await page.getByRole("button", { name: "＋ 正则解析" }).click();
+  await page.getByRole("button", { name: "划选样例自动生成正则" }).click();
+  const sampleLine =
+    '10.20.30.40 [ERROR] {"trace_id":"tr-e2e-9","events":[{"code":"E1","msg":"db timeout","debug_noise":"huge"},{"code":"E2","msg":"retry fail","debug_noise":"huge"}]}';
+  const selectBox = page.getByLabel("查询 B 处理器 1 划选样例");
+  await selectBox.fill(sampleLine);
+
+  const markSegment = async (segment: string, fieldName?: string) => {
+    const start = sampleLine.indexOf(segment);
+    const end = start + segment.length;
+    await selectBox.evaluate(
+      (el: HTMLTextAreaElement, range: [number, number]) => {
+        el.focus();
+        el.setSelectionRange(range[0], range[1]);
+        el.dispatchEvent(new Event("select", { bubbles: true }));
+      },
+      [start, end] as [number, number],
+    );
+    if (fieldName) {
+      await page.getByLabel("查询 B 处理器 1 划选字段名").fill(fieldName);
+    }
+    await page.getByRole("button", { name: "标记为字段" }).click();
+  };
+
+  await markSegment("10.20.30.40"); // 自动建议字段名 ip
+  await markSegment("ERROR"); // 自动建议字段名 level
+  await markSegment(sampleLine.slice(sampleLine.indexOf("{")), "payload");
+  await page.getByRole("button", { name: "生成正则并验证" }).click();
+  await expect(page.getByLabel("查询 B 处理器 1 提取字段")).toHaveValue("ip, level, payload");
+  await expect(page.getByLabel("查询 B 日志处理预览结果")).toContainText('"ip": "10.20.30.40"');
+
+  await page.getByRole("button", { name: "＋ JSON 解析" }).click();
+  await page.getByLabel("查询 B 处理器 2 原始字段").fill("payload");
+  await page.getByRole("button", { name: "＋ 拆分数组" }).click();
+  await page.getByLabel("查询 B 处理器 3 原始字段").fill("events");
+  await page.getByRole("button", { name: "＋ 保留字段" }).click();
+  await page.getByLabel("查询 B 处理器 4 字段列表").fill("Time, Statement, Range, ip, level, trace_id, code, msg");
+  await page.getByRole("button", { name: "验证处理效果" }).click();
+  await expect(page.getByText("#3 拆分数组 · 拆出 2 行")).toBeVisible();
+  await expect(page.getByLabel("查询 B 日志处理预览结果")).toContainText('"code": "E1"');
+  await expect(page.getByLabel("查询 B 日志处理预览结果")).toContainText('"code": "E2"');
+  await expect(page.getByLabel("查询 B 日志处理预览结果")).not.toContainText("debug_noise");
+
   await page.getByRole("button", { name: "从占位符生成参数" }).click();
 
   await expect(page.getByLabel("参数 1 名称")).toHaveValue("host_ip");
@@ -572,6 +620,13 @@ test("管理员配置 Grafana 连接并创建多条查询工具与调试发布",
   await expect(page.locator(".call-result pre").first()).toContainText('10.20.30.40');
   await expect(page.locator(".call-result pre").first()).toContainText('now-1h..now');
   await expect(page.locator(".call-result pre").first()).toContainText('prod');
+  await expect(page.locator(".call-result pre").first()).toContainText('"dataType": "metrics"');
+  await expect(page.locator(".call-result pre").first()).toContainText('"dataType": "logs"');
+  await expect(page.locator(".call-result pre").first()).toContainText('"trace_id": "tr-e2e-9"');
+  await expect(page.locator(".call-result pre").first()).toContainText('"code": "E1"');
+  await expect(page.locator(".call-result pre").first()).toContainText('"code": "E2"');
+  await expect(page.locator(".call-result pre").first()).not.toContainText("redundant-pod-uid");
+  await expect(page.locator(".call-result pre").first()).not.toContainText("debug_noise");
   await expect(page.getByText("Grafana 原始响应")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("grafana-editor-desktop.png"), fullPage: true });
 
@@ -585,7 +640,10 @@ test("管理员配置 Grafana 连接并创建多条查询工具与调试发布",
   await page.getByRole("button", { name: "发布工具", exact: true }).click();
   await expect(page.getByRole("button", { name: "停用工具" })).toBeVisible();
   await page.getByRole("button", { name: "返回接口库" }).click();
-  await expect(page.locator(".tool-table")).toContainText(toolName);
-  await expect(page.locator(".tool-table")).toContainText("GRAFANA");
+  const toolRow = page.locator(".tool-table tr", { hasText: toolName });
+  await expect(toolRow).toContainText("GRAFANA");
+  await expect(toolRow).toContainText("METRICS");
+  await expect(toolRow).toContainText("LOGS");
+  await page.screenshot({ path: testInfo.outputPath("grafana-library-desktop.png"), fullPage: true });
   expect(consoleErrors).toEqual([]);
 });

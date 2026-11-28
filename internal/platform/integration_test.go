@@ -720,24 +720,36 @@ func TestGrafanaIntegration(t *testing.T) {
 			for _, q := range reqBody.Queries {
 				refID := q["refId"].(string)
 				expr, _ := q["expr"].(string)
+				fields := []map[string]any{
+					{"name": "Time", "type": "time"},
+					{"name": "Expr", "type": "string"},
+					{"name": "Range", "type": "string"},
+				}
+				values := [][]any{
+					{int64(1700000000000)},
+					{expr},
+					{reqBody.From + ".." + reqBody.To},
+				}
+				if refID == "B" {
+					fields = append(fields,
+						map[string]any{"name": "_msg", "type": "string"},
+						map[string]any{"name": "pod_uid", "type": "string"},
+					)
+					values = append(values,
+						[]any{`10.1.2.3 [ERROR] {"trace_id":"tr-int-1","msg":"timeout","debug":"drop"}`},
+						[]any{"noisy-pod-uid"},
+					)
+				}
 				results[refID] = map[string]any{
 					"status": 200,
 					"frames": []map[string]any{{
 						"schema": map[string]any{
-							"name":  refID,
-							"refId": refID,
-							"fields": []map[string]any{
-								{"name": "Time", "type": "time"},
-								{"name": "Expr", "type": "string"},
-								{"name": "Range", "type": "string"},
-							},
+							"name":   refID,
+							"refId":  refID,
+							"fields": fields,
 						},
 						"data": map[string]any{
-							"values": [][]any{
-								{int64(1700000000000)},
-								{expr},
-								{reqBody.From + ".." + reqBody.To},
-							},
+							"values": values,
 						},
 					}},
 				}
@@ -848,8 +860,21 @@ func TestGrafanaIntegration(t *testing.T) {
 			ToRequired:   false,
 			DefaultTo:    "now",
 			Queries: []GrafanaQuery{
-				{RefID: "A", DatasourceUID: "prom-1", DatasourceType: "prometheus", DatasourceName: "Prometheus", Expr: `up{instance=~"{{host_ip}}.*"}`},
-				{RefID: "B", DatasourceUID: "vmlogs-1", DatasourceType: "victoriametrics-logs-datasource", DatasourceName: "VictoriaLogs", Expr: `host:"{{host_ip}}"`, MaxLines: 50},
+				{RefID: "A", DatasourceUID: "prom-1", DatasourceType: "prometheus", DatasourceName: "Prometheus", DataType: "metrics", Expr: `up{instance=~"{{host_ip}}.*"}`},
+				{
+					RefID:          "B",
+					DatasourceUID:  "vmlogs-1",
+					DatasourceType: "victoriametrics-logs-datasource",
+					DatasourceName: "VictoriaLogs",
+					DataType:       "logs",
+					Expr:           `host:"{{host_ip}}"`,
+					MaxLines:       50,
+					LogProcessors: []LogProcessor{
+						{Type: "regex", SourceKey: "_msg", Regex: `^(\S+)\s+\[(\w+)\]\s+(\{.*\})$`, Keys: []string{"ip", "level", "payload"}},
+						{Type: "json", SourceKey: "payload", ExpandDepth: 1},
+						{Type: "keep_fields", Fields: []string{"Time", "Expr", "Range", "ip", "level", "trace_id", "msg"}},
+					},
+				},
 			},
 		},
 		Parameters: []Parameter{
@@ -883,6 +908,25 @@ func TestGrafanaIntegration(t *testing.T) {
 	}
 	if !strings.Contains(callRes.Body, "now-1h..now") {
 		t.Fatalf("整理后的结果未使用默认时间：%s", callRes.Body)
+	}
+	if !strings.Contains(callRes.Body, `"dataType":"metrics"`) || !strings.Contains(callRes.Body, `"dataType":"logs"`) {
+		t.Fatalf("整理后的结果缺少 metrics/logs 数据类型标签：%s", callRes.Body)
+	}
+	if !strings.Contains(callRes.Body, `"trace_id":"tr-int-1"`) || strings.Contains(callRes.Body, "noisy-pod-uid") || strings.Contains(callRes.Body, `"debug":"drop"`) {
+		t.Fatalf("Logs 处理器未对调试结果生效：%s", callRes.Body)
+	}
+	// 测试日志样例分步预览接口
+	var previewRes struct {
+		Output map[string]any `json:"output"`
+		Steps  []struct {
+			Matched bool `json:"matched"`
+		} `json:"steps"`
+	}
+	if code := jsonRequest(t, member, "POST", server.URL+"/api/grafana/log-processors/preview", map[string]any{
+		"sample":     `10.1.2.3 [ERROR] {"trace_id":"tr-prev-1","msg":"timeout","debug":"drop"}`,
+		"processors": def.Grafana.Queries[1].LogProcessors,
+	}, &previewRes); code != 200 || len(previewRes.Steps) != 3 || !previewRes.Steps[0].Matched || previewRes.Output["trace_id"] != "tr-prev-1" {
+		t.Fatalf("日志处理预览接口异常：%d %+v", code, previewRes)
 	}
 
 	// 发布并通过真实 MCP 客户端调用（覆盖 from/to）
@@ -921,7 +965,7 @@ func TestGrafanaIntegration(t *testing.T) {
 		t.Fatalf("MCP 调用 Grafana 工具失败：%v %+v", err, mcpRes)
 	}
 	text := mcpRes.Content[0].(*mcp.TextContent).Text
-	if !strings.Contains(text, "10.9.9.9") || !strings.Contains(text, "now-15m..now") {
+	if !strings.Contains(text, "10.9.9.9") || !strings.Contains(text, "now-15m..now") || !strings.Contains(text, `"dataType":"metrics"`) || !strings.Contains(text, `"dataType":"logs"`) || !strings.Contains(text, `"trace_id":"tr-int-1"`) || strings.Contains(text, "noisy-pod-uid") {
 		t.Fatalf("MCP 返回内容不符：%s", text)
 	}
 }

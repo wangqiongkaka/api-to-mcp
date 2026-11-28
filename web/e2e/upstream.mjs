@@ -26,24 +26,36 @@ const server = createServer(async (req, res) => {
     const results = {}
     for (const q of body.queries || []) {
       const statement = q.expr || q.rawSql || q.query || ''
+      const fields = [
+        { name: 'Time', type: 'time' },
+        { name: 'Statement', type: 'string', labels: { datasource: q.datasource?.type || '' } },
+        { name: 'Range', type: 'string' },
+      ]
+      const values = [
+        [1700000000000],
+        [statement],
+        [`${body.from}..${body.to}`],
+      ]
+      if ((q.datasource?.type || '').includes('logs')) {
+        fields.push(
+          { name: '_msg', type: 'string' },
+          { name: 'pod_uid', type: 'string' },
+        )
+        values.push(
+          ['10.20.30.40 [ERROR] {"trace_id":"tr-e2e-9","events":[{"code":"E1","msg":"db timeout","debug_noise":"huge"},{"code":"E2","msg":"retry fail","debug_noise":"huge"}]}'],
+          ['redundant-pod-uid'],
+        )
+      }
       results[q.refId] = {
         status: 200,
         frames: [{
           schema: {
             name: q.refId,
             refId: q.refId,
-            fields: [
-              { name: 'Time', type: 'time' },
-              { name: 'Statement', type: 'string', labels: { datasource: q.datasource?.type || '' } },
-              { name: 'Range', type: 'string' },
-            ],
+            fields,
           },
           data: {
-            values: [
-              [1700000000000],
-              [statement],
-              [`${body.from}..${body.to}`],
-            ],
+            values,
           },
         }],
       }

@@ -144,6 +144,7 @@ func TestGrafanaDefinitionValidateAndSchema(t *testing.T) {
 		{"空占位符", func(d *Definition) { d.Grafana.Queries[0].Expr = `up{instance="{{}}"}` }},
 		{"RefID 重复", func(d *Definition) { d.Grafana.Queries[1].RefID = "a" }},
 		{"数组参数不支持", func(d *Definition) { d.Parameters[0].Type = "array" }},
+		{"非法 dataType", func(d *Definition) { d.Grafana.Queries[0].DataType = "traces" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -273,7 +274,11 @@ func TestFormatGrafanaResponseAndOutputMapping(t *testing.T) {
 			}
 		}
 	}`)
-	formatted, err := formatGrafanaResponse("now-1h", "now", raw)
+	queries := []GrafanaQuery{
+		{RefID: "A", DatasourceType: "prometheus"},
+		{RefID: "B", DatasourceType: "grafana-clickhouse-datasource", DataType: "logs"},
+	}
+	formatted, err := formatGrafanaResponse("now-1h", "now", queries, raw)
 	if err != nil {
 		t.Fatalf("整理 DataFrame 失败：%v", err)
 	}
@@ -283,6 +288,9 @@ func TestFormatGrafanaResponseAndOutputMapping(t *testing.T) {
 	}
 	results := parsed["results"].(map[string]any)
 	aRes := results["A"].(map[string]any)
+	if aRes["dataType"] != "metrics" {
+		t.Fatalf("A 查询应自动标记为 metrics，实际：%#v", aRes["dataType"])
+	}
 	frames := aRes["frames"].([]any)
 	frame0 := frames[0].(map[string]any)
 	rows := frame0["rows"].([]any)
@@ -294,6 +302,9 @@ func TestFormatGrafanaResponseAndOutputMapping(t *testing.T) {
 		t.Fatalf("首行格式化不符：%#v", row0)
 	}
 	bRes := results["B"].(map[string]any)
+	if bRes["dataType"] != "logs" {
+		t.Fatalf("B 查询手动标注 logs 应保留，实际：%#v", bRes["dataType"])
+	}
 	if bRes["error"] != "syntax error" {
 		t.Fatalf("B 查询错误未保留：%#v", bRes)
 	}
@@ -302,11 +313,12 @@ func TestFormatGrafanaResponseAndOutputMapping(t *testing.T) {
 	mapped, err := mapOutput([]OutputField{
 		{Name: "values", Source: "response", Value: "/results/A/frames/0/rows/*/Value"},
 		{Name: "instance", Source: "response", Value: "/results/A/frames/0/labels/instance"},
+		{Name: "type", Source: "response", Value: "/results/A/dataType"},
 	}, formatted)
 	if err != nil {
 		t.Fatalf("输出字段映射失败：%v", err)
 	}
-	if string(mapped) != `{"instance":"10.0.0.8:9100","values":[1,0.5]}` {
+	if string(mapped) != `{"instance":"10.0.0.8:9100","type":"metrics","values":[1,0.5]}` {
 		t.Fatalf("输出映射结果不符：%s", string(mapped))
 	}
 }

@@ -42,12 +42,34 @@ type GrafanaQuery struct {
 	DatasourceUID  string `json:"datasourceUid"`
 	DatasourceType string `json:"datasourceType"`
 	DatasourceName string `json:"datasourceName,omitempty"`
-	Expr           string `json:"expr"`
-	QueryMode      string `json:"queryMode,omitempty"`
-	MaxDataPoints  int    `json:"maxDataPoints,omitempty"`
-	Interval       string `json:"interval,omitempty"`
-	MaxLines       int    `json:"maxLines,omitempty"`
-	TimeField      string `json:"timeField,omitempty"`
+	DataType       string         `json:"dataType,omitempty"`
+	Expr           string         `json:"expr"`
+	QueryMode      string         `json:"queryMode,omitempty"`
+	MaxDataPoints  int            `json:"maxDataPoints,omitempty"`
+	Interval       string         `json:"interval,omitempty"`
+	MaxLines       int            `json:"maxLines,omitempty"`
+	TimeField      string         `json:"timeField,omitempty"`
+	LogProcessors  []LogProcessor `json:"logProcessors,omitempty"`
+}
+
+func defaultGrafanaDataType(dsType string) string {
+	switch grafanaDatasourceFamily(dsType) {
+	case "loki", "victorialogs", "elasticsearch":
+		return "logs"
+	default:
+		return "metrics"
+	}
+}
+
+func (q GrafanaQuery) resolvedDataType() string {
+	switch strings.ToLower(strings.TrimSpace(q.DataType)) {
+	case "metrics":
+		return "metrics"
+	case "logs":
+		return "logs"
+	default:
+		return defaultGrafanaDataType(q.DatasourceType)
+	}
 }
 
 type GrafanaConnection struct {
@@ -603,6 +625,17 @@ func (d Definition) validateGrafana() error {
 		if strings.TrimSpace(q.DatasourceUID) == "" || strings.TrimSpace(q.DatasourceType) == "" {
 			return fmt.Errorf("查询 %s 请选择有效的数据源", refID)
 		}
+		if dt := strings.ToLower(strings.TrimSpace(q.DataType)); dt != "" && dt != "metrics" && dt != "logs" {
+			return fmt.Errorf("查询 %s 的数据类型仅支持 metrics 或 logs", refID)
+		}
+		if len(q.LogProcessors) > 0 {
+			if q.resolvedDataType() != "logs" {
+				return fmt.Errorf("查询 %s 仅 logs 数据类型支持配置日志处理器", refID)
+			}
+			if err := validateLogProcessors(refID, q.LogProcessors); err != nil {
+				return err
+			}
+		}
 		if strings.TrimSpace(q.Expr) == "" || len(q.Expr) > 32768 {
 			return fmt.Errorf("查询 %s 请输入不超过 32768 字节的查询语句", refID)
 		}
@@ -961,9 +994,10 @@ type formattedGrafanaResponse struct {
 }
 
 type formattedGrafanaEntry struct {
-	Status int                    `json:"status,omitempty"`
-	Error  string                 `json:"error,omitempty"`
-	Frames []formattedGrafanaItem `json:"frames"`
+	DataType string                 `json:"dataType,omitempty"`
+	Status   int                    `json:"status,omitempty"`
+	Error    string                 `json:"error,omitempty"`
+	Frames   []formattedGrafanaItem `json:"frames"`
 }
 
 type formattedGrafanaItem struct {
@@ -989,12 +1023,22 @@ func formatGrafanaValue(fieldType string, v any) any {
 	return v
 }
 
-func formatGrafanaResponse(from, to string, raw []byte) ([]byte, error) {
+func formatGrafanaResponse(from, to string, queries []GrafanaQuery, raw []byte) ([]byte, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	var parsed grafanaDSResponse
 	if err := dec.Decode(&parsed); err != nil || parsed.Results == nil {
 		return raw, nil
+	}
+	queryByRef := make(map[string]GrafanaQuery, len(queries))
+	queryByRefLower := make(map[string]GrafanaQuery, len(queries))
+	for _, q := range queries {
+		ref := strings.TrimSpace(q.RefID)
+		if ref == "" {
+			continue
+		}
+		queryByRef[ref] = q
+		queryByRefLower[strings.ToLower(ref)] = q
 	}
 	out := formattedGrafanaResponse{
 		From:    from,
@@ -1002,10 +1046,19 @@ func formatGrafanaResponse(from, to string, raw []byte) ([]byte, error) {
 		Results: make(map[string]formattedGrafanaEntry, len(parsed.Results)),
 	}
 	for refID, res := range parsed.Results {
+		q, found := queryByRef[refID]
+		if !found {
+			q, found = queryByRefLower[strings.ToLower(refID)]
+		}
+		dt := ""
+		if found {
+			dt = q.resolvedDataType()
+		}
 		entry := formattedGrafanaEntry{
-			Status: res.Status,
-			Error:  res.Error,
-			Frames: make([]formattedGrafanaItem, 0, len(res.Frames)),
+			DataType: dt,
+			Status:   res.Status,
+			Error:    res.Error,
+			Frames:   make([]formattedGrafanaItem, 0, len(res.Frames)),
 		}
 		for _, frame := range res.Frames {
 			fields := frame.Schema.Fields
@@ -1045,6 +1098,9 @@ func formatGrafanaResponse(from, to string, raw []byte) ([]byte, error) {
 					row[names[c]] = val
 				}
 				rows = append(rows, row)
+			}
+			if found && dt == "logs" && len(q.LogProcessors) > 0 {
+				rows = applyLogProcessorsToRows(rows, q.LogProcessors)
 			}
 			var notices []string
 			for _, notice := range frame.Schema.Meta.Notices {

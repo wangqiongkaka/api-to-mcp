@@ -91,7 +91,11 @@ func (a *App) executeWithRaw(ctx context.Context, d Definition, args map[string]
 		if includeRaw {
 			result.RawBody = string(data)
 		}
-		formatted, err := formatGrafanaResponse(resolvedFrom, resolvedTo, data)
+		var queries []GrafanaQuery
+		if d.Grafana != nil {
+			queries = d.Grafana.Queries
+		}
+		formatted, err := formatGrafanaResponse(resolvedFrom, resolvedTo, queries, data)
 		if err != nil {
 			return result, fmt.Errorf("解析 Grafana 响应失败")
 		}

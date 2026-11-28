@@ -17,17 +17,37 @@ export interface Parameter {
   value: string;
 }
 
+export type GrafanaDataType = "metrics" | "logs";
+
+export type LogProcessorType = "json" | "regex" | "split_array" | "keep_fields" | "drop_fields";
+
+export interface LogProcessor {
+  type: LogProcessorType;
+  sourceKey?: string;
+  targetKey?: string;
+  keepSource?: boolean;
+  keepSourceIfParseError?: boolean;
+  expandDepth?: number;
+  expandConnector?: string;
+  prefix?: string;
+  regex?: string;
+  keys?: string[];
+  fields?: string[];
+}
+
 export interface GrafanaQuery {
   refId: string;
   datasourceUid: string;
   datasourceType: string;
   datasourceName?: string;
+  dataType?: GrafanaDataType;
   expr: string;
   queryMode?: string;
   maxDataPoints?: number;
   interval?: string;
   maxLines?: number;
   timeField?: string;
+  logProcessors?: LogProcessor[];
 }
 
 export interface GrafanaConfig {
@@ -159,12 +179,26 @@ export function grafanaDatasourceFamily(dsType: string): GrafanaDatasourceFamily
   return "generic";
 }
 
+export function defaultGrafanaDataType(dsType: string): GrafanaDataType {
+  switch (grafanaDatasourceFamily(dsType)) {
+    case "loki":
+    case "victorialogs":
+    case "elasticsearch":
+      return "logs";
+    default:
+      return "metrics";
+  }
+}
+
 export function emptyGrafanaQuery(refId = "A", previous?: GrafanaQuery): GrafanaQuery {
   return {
     refId,
     datasourceUid: previous?.datasourceUid ?? "",
     datasourceType: previous?.datasourceType ?? "",
     datasourceName: previous?.datasourceName ?? "",
+    dataType:
+      previous?.dataType ??
+      (previous?.datasourceType ? defaultGrafanaDataType(previous.datasourceType) : "metrics"),
     expr: "",
     queryMode: "",
     maxDataPoints: undefined,
@@ -249,9 +283,19 @@ export function definitionOf(d: Definition): Definition {
           queries: d.grafana?.queries?.length
             ? d.grafana.queries.map((q) => ({
                 ...q,
+                dataType:
+                  q.dataType ??
+                  (q.datasourceType ? defaultGrafanaDataType(q.datasourceType) : "metrics"),
                 queryMode: q.queryMode ?? "",
                 interval: q.interval ?? "",
                 timeField: q.timeField ?? "",
+                logProcessors: q.logProcessors?.length
+                  ? q.logProcessors.map((p) => ({
+                      ...p,
+                      keys: p.keys ? [...p.keys] : undefined,
+                      fields: p.fields ? [...p.fields] : undefined,
+                    }))
+                  : undefined,
               }))
             : [emptyGrafanaQuery("A")],
         }

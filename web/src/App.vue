@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import HelpHint from "./HelpHint.vue";
 import GrafanaConnections from "./GrafanaConnections.vue";
+import GrafanaLogProcessors from "./GrafanaLogProcessors.vue";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import type {
   AccessToken,
@@ -16,6 +17,7 @@ import type {
   User,
 } from "./types";
 import {
+  defaultGrafanaDataType,
   definitionOf,
   emptyDefinition,
   emptyGrafanaDefinition,
@@ -151,7 +153,7 @@ const visibleTools = computed(() =>
     (t) =>
       (filter.value === "all" ||
         (filter.value === "published" ? t.published : !t.published)) &&
-      `${t.name} ${t.description} ${t.url} ${t.ownerName} ${t.kind === "grafana" ? "grafana " + grafanaSummary(t) : ""}`
+      `${t.name} ${t.description} ${t.url} ${t.ownerName} ${t.kind === "grafana" ? "grafana " + grafanaSummary(t) + " " + grafanaDataTypes(t).join(" ") : ""}`
         .toLowerCase()
         .includes(search.value.toLowerCase()),
   ),
@@ -269,6 +271,7 @@ async function loadDatasources(connectionId: number, autoSelectDefault = false) 
           q.datasourceUid = def.uid;
           q.datasourceType = def.type;
           q.datasourceName = def.name;
+          q.dataType = defaultGrafanaDataType(def.type);
         }
       }
     }
@@ -279,6 +282,15 @@ async function loadDatasources(connectionId: number, autoSelectDefault = false) 
   } finally {
     loadingDatasources.value = false;
   }
+}
+function grafanaDataTypes(t: Tool): Array<"metrics" | "logs"> {
+  if (t.kind !== "grafana" || !t.grafana?.queries?.length) return [];
+  const seen = new Set<"metrics" | "logs">();
+  for (const q of t.grafana.queries) {
+    const dt = q.dataType ?? (q.datasourceType ? defaultGrafanaDataType(q.datasourceType) : undefined);
+    if (dt === "metrics" || dt === "logs") seen.add(dt);
+  }
+  return (["metrics", "logs"] as const).filter((dt) => seen.has(dt));
 }
 function grafanaSummary(t: Tool) {
   if (t.kind !== "grafana") return t.url;
@@ -475,6 +487,8 @@ function selectQueryDatasource(q: GrafanaQuery, uid: string) {
   if (ds) {
     q.datasourceType = ds.type;
     q.datasourceName = ds.name;
+    q.dataType = defaultGrafanaDataType(ds.type);
+    if (q.dataType !== "logs") q.logProcessors = undefined;
     q.queryMode = "";
   } else {
     q.datasourceType = "";
@@ -1355,8 +1369,15 @@ onUnmounted(() => {
                 </td>
                 <td>
                   <template v-if="t.kind === 'grafana'">
-                    <span class="method grafana">GRAFANA</span
-                    ><span class="row-url" :title="grafanaSummary(t)">{{ grafanaSummary(t) }}</span>
+                    <div class="grafana-method-tags">
+                      <span class="method grafana">GRAFANA</span>
+                      <span
+                        v-for="dt in grafanaDataTypes(t)"
+                        :key="dt"
+                        :class="['badge', 'data-type', dt]"
+                      >{{ dt === "metrics" ? "METRICS" : "LOGS" }}</span>
+                    </div>
+                    <span class="row-url" :title="grafanaSummary(t)">{{ grafanaSummary(t) }}</span>
                   </template>
                   <template v-else>
                     <span :class="['method', t.method.toLowerCase()]">{{
@@ -1661,6 +1682,18 @@ onUnmounted(() => {
                               </option>
                             </select>
                           </label>
+                          <label class="data-type-field">
+                            数据类型
+                            <select
+                              v-model="q.dataType"
+                              required
+                              :aria-label="`查询 ${q.refId || qIndex + 1} 数据类型`"
+                              @change="q.dataType !== 'logs' && (q.logProcessors = undefined)"
+                            >
+                              <option value="metrics">Metrics（指标）</option>
+                              <option value="logs">Logs（日志）</option>
+                            </select>
+                          </label>
                           <button
                             v-if="editor.grafana.queries.length > 1"
                             type="button"
@@ -1737,6 +1770,12 @@ onUnmounted(() => {
                             @input="grafanaExtractionError = ''"
                           />
                         </label>
+                        <GrafanaLogProcessors
+                          v-if="q.dataType === 'logs'"
+                          v-model="q.logProcessors"
+                          :ref-id="q.refId || String(qIndex + 1)"
+                          :disabled="published || saving"
+                        />
                       </div>
                       <p v-if="grafanaPlaceholderNames.length" class="body-template-tokens">
                         <span>已识别占位符</span>

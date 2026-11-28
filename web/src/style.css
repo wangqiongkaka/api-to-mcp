@@ -708,6 +708,20 @@ tbody tr:last-child td {
   color: #9a4714;
   background: #fff3eb;
 }
+.grafana-method-tags {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.badge.data-type.metrics {
+  background: #edf2ff;
+  color: #245bd7;
+}
+.badge.data-type.logs {
+  background: #eaf6f1;
+  color: #137467;
+}
 .kind-switch {
   display: inline-flex;
   gap: 4px;
@@ -760,6 +774,7 @@ tbody tr:last-child td {
   border: 1px solid var(--border);
   border-radius: 9px;
   background: #fafbfd;
+  min-width: 0;
 }
 .grafana-query-head {
   display: flex;
@@ -770,6 +785,10 @@ tbody tr:last-child td {
   width: 96px;
   flex-shrink: 0;
 }
+.data-type-field {
+  width: 152px;
+  flex-shrink: 0;
+}
 .grafana-query-options {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -778,14 +797,192 @@ tbody tr:last-child td {
 .grafana-raw-details {
   margin-top: 12px;
 }
+.log-processor-box {
+  border-top: 1px dashed #d8dfeb;
+  padding-top: 10px;
+  min-width: 0;
+}
+.log-processor-box > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 550;
+  padding-block: 2px;
+  flex-wrap: wrap;
+}
+.log-processor-box > summary:hover {
+  text-decoration: underline;
+}
+.log-processor-body {
+  display: grid;
+  gap: 12px;
+  margin-top: 10px;
+  min-width: 0;
+}
+.log-processor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  min-width: 0;
+}
+.log-processor-list {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.log-processor-step {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  min-width: 0;
+}
+.log-processor-step > *,
+.regex-helper > * {
+  min-width: 0;
+}
+.log-processor-step-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.small-icon {
+  min-width: 26px;
+  min-height: 26px;
+  font-size: 14px;
+  padding: 2px 6px;
+}
+.log-processor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+.log-processor-grid.two-col {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+}
+.log-processor-checks {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.log-processor-preview {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid #e2e8f3;
+  border-radius: 8px;
+  background: #fff;
+  min-width: 0;
+}
+.log-preview-output {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.log-preview-steps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.log-preview-output pre {
+  background: #f6f8fc;
+  border: 1px solid #e4eaf3;
+  border-radius: 6px;
+  padding: 10px 12px;
+  max-height: 240px;
+  font-size: 11px;
+  color: #364b6e;
+  max-width: 100%;
+}
+.regex-helper {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #d9e4f5;
+  border-radius: 7px;
+  background: #f7faff;
+  min-width: 0;
+}
+.regex-mark-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  min-width: 0;
+}
+.regex-mark-row > .grow {
+  flex: 1 1 200px;
+  overflow-wrap: anywhere;
+}
+.regex-mark-row code {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #eaf1ff;
+  color: #1f4494;
+}
+.mark-name-input {
+  width: 150px;
+  flex: 1 1 120px;
+}
+.regex-marks {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.regex-mark-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px 9px;
+  border: 1px solid #cfddf3;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 11px;
+  max-width: 100%;
+  min-width: 0;
+}
+.regex-mark-chip code {
+  color: var(--muted);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 @media (max-width: 760px) {
   .grafana-conn-grid,
-  .grafana-time-grid {
+  .grafana-time-grid,
+  .log-processor-grid.two-col {
     grid-template-columns: minmax(0, 1fr);
   }
-  .grafana-connection-row,
-  .grafana-query-head {
+  .grafana-connection-row {
     flex-wrap: wrap;
+  }
+  .grafana-query-head {
+    display: grid;
+    grid-template-columns: 88px minmax(0, 1fr) auto;
+    align-items: end;
+  }
+  .grafana-query-head .ref-id-field,
+  .grafana-query-head .data-type-field {
+    width: auto;
+  }
+  .grafana-query-head > .grow {
+    grid-column: 1 / -1;
+    order: 2;
   }
 }
 .badge {

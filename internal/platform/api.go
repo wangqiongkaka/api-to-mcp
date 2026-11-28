@@ -58,6 +58,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/grafana/connections/{id}", a.requireUser(a.grafanaConnection))
 	mux.HandleFunc("POST /api/grafana/connections/{id}/test", a.requireUser(a.testGrafanaConnection))
 	mux.HandleFunc("GET /api/grafana/connections/{id}/datasources", a.requireUser(a.grafanaDatasources))
+	mux.HandleFunc("POST /api/grafana/log-processors/preview", a.requireUser(a.previewLogProcessors))
 	mux.HandleFunc("GET /api/tokens", a.requireUser(a.tokens))
 	mux.HandleFunc("POST /api/tokens", a.requireUser(a.tokens))
 	mux.HandleFunc("DELETE /api/tokens/{id}", a.requireUser(a.tokens))
@@ -97,11 +98,21 @@ func (a *App) tools(w http.ResponseWriter, r *http.Request) {
 			}
 			visible := Definition{Kind: t.Kind, Name: t.mcpName(u.ID), Description: t.Description, Method: t.effectiveMethod(), WholeBody: t.WholeBody, Parameters: []Parameter{}, Approval: t.Approval}
 			if t.isGrafana() && t.Grafana != nil {
+				seenTypes := map[string]bool{}
+				var summaryQueries []GrafanaQuery
+				for _, q := range t.Grafana.Queries {
+					dt := q.resolvedDataType()
+					if !seenTypes[dt] {
+						seenTypes[dt] = true
+						summaryQueries = append(summaryQueries, GrafanaQuery{DataType: dt})
+					}
+				}
 				visible.Grafana = &GrafanaConfig{
 					FromRequired: t.Grafana.FromRequired,
 					DefaultFrom:  t.Grafana.DefaultFrom,
 					ToRequired:   t.Grafana.ToRequired,
 					DefaultTo:    t.Grafana.DefaultTo,
+					Queries:      summaryQueries,
 				}
 			}
 			for _, p := range t.Parameters {

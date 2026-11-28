@@ -57,8 +57,13 @@ func (d *Definition) normalize() {
 				q.DatasourceUID = strings.TrimSpace(q.DatasourceUID)
 				q.DatasourceType = strings.TrimSpace(q.DatasourceType)
 				q.DatasourceName = strings.TrimSpace(q.DatasourceName)
+				q.DataType = strings.ToLower(strings.TrimSpace(q.DataType))
+				if q.DataType == "" && q.DatasourceType != "" {
+					q.DataType = defaultGrafanaDataType(q.DatasourceType)
+				}
 				q.Interval = strings.TrimSpace(q.Interval)
 				q.TimeField = strings.TrimSpace(q.TimeField)
+				q.LogProcessors = normalizeLogProcessors(q.LogProcessors)
 			}
 		}
 		for i := range d.Parameters {
