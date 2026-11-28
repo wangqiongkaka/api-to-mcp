@@ -538,7 +538,9 @@ test("管理员配置 Grafana 连接并创建多条查询工具与调试发布",
   await page.screenshot({ path: testInfo.outputPath("grafana-connections-desktop.png"), fullPage: true });
 
   await page.locator("nav").getByRole("button", { name: /接口库/ }).click();
-  await page.getByRole("button", { name: /新建 Grafana 查询/ }).click();
+  await expect(page.getByRole("button", { name: "新建 Grafana 查询", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "新建接口", exact: true }).click();
+  await page.getByRole("group", { name: "工具类型" }).getByRole("button", { name: "Grafana 查询", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Grafana 查询定义" })).toBeVisible();
 
   const toolName = `grafana_host_${Date.now()}`;

@@ -413,11 +413,6 @@ function newTool(example = false) {
   openEditor(example ? podExample() : emptyDefinition());
 }
 
-function newGrafanaTool() {
-  const defaultConn = grafanaConnections.value.length === 1 ? grafanaConnections.value[0].id : 0;
-  openEditor(emptyGrafanaDefinition(defaultConn));
-}
-
 function switchEditorKind(kind: "http" | "grafana") {
   if (!editor.value || selectedId.value !== null) return;
   const currentlyGrafana = editor.value.kind === "grafana";
@@ -1335,9 +1330,6 @@ onUnmounted(() => {
             <p>把现有 REST API，连接到你的 AI 工作流。</p>
           </div>
           <div class="button-row">
-            <button class="button" @click="newGrafanaTool()">
-              <span aria-hidden="true">＋</span>新建 Grafana 查询
-            </button>
             <button class="button primary" @click="newTool()">
               <span aria-hidden="true">＋</span>新建接口
             </button>
