@@ -185,49 +185,49 @@ func resolveRegexFieldNames(re *compiledRegex, keys []string) ([]string, error) 
 	return names, nil
 }
 
-func validateLogProcessors(refID string, list []LogProcessor) error {
+func validateLogProcessors(scope string, list []LogProcessor) error {
 	if len(list) > 10 {
-		return fmt.Errorf("查询 %s 最多配置 10 个日志处理器", refID)
+		return fmt.Errorf("%s 最多配置 10 个数据处理器", scope)
 	}
 	for i, p := range list {
 		step := i + 1
 		switch p.Type {
 		case "json":
 			if len(p.SourceKey) > 128 || len(p.ExpandConnector) > 8 || len(p.Prefix) > 64 {
-				return fmt.Errorf("查询 %s 第 %d 个 JSON 处理器字段名、连接符或前缀过长", refID, step)
+				return fmt.Errorf("%s 第 %d 个 JSON 处理器字段名、连接符或前缀过长", scope, step)
 			}
 			if p.ExpandDepth < 0 || p.ExpandDepth > 20 {
-				return fmt.Errorf("查询 %s 第 %d 个 JSON 处理器展开深度须在 0–20 之间（0 表示全部展开）", refID, step)
+				return fmt.Errorf("%s 第 %d 个 JSON 处理器展开深度须在 0–20 之间（0 表示全部展开）", scope, step)
 			}
 		case "split_array":
 			if len(p.SourceKey) > 128 || len(p.TargetKey) > 128 {
-				return fmt.Errorf("查询 %s 第 %d 个数组拆分处理器字段名过长", refID, step)
+				return fmt.Errorf("%s 第 %d 个数组拆分处理器字段名过长", scope, step)
 			}
 		case "regex":
 			if len(p.SourceKey) > 128 {
-				return fmt.Errorf("查询 %s 第 %d 个正则处理器原始字段名过长", refID, step)
+				return fmt.Errorf("%s 第 %d 个正则处理器原始字段名过长", scope, step)
 			}
 			if p.Regex == "" || len(p.Regex) > 4096 {
-				return fmt.Errorf("查询 %s 第 %d 个正则处理器请输入不超过 4096 字节的正则表达式", refID, step)
+				return fmt.Errorf("%s 第 %d 个正则处理器请输入不超过 4096 字节的正则表达式", scope, step)
 			}
 			re, err := compileDualRegex(p.Regex)
 			if err != nil {
-				return fmt.Errorf("查询 %s 第 %d 个正则处理器表达式语法无效：%v", refID, step, err)
+				return fmt.Errorf("%s 第 %d 个正则处理器表达式语法无效：%v", scope, step, err)
 			}
 			if _, err := resolveRegexFieldNames(re, p.Keys); err != nil {
-				return fmt.Errorf("查询 %s 第 %d 个正则处理器：%v", refID, step, err)
+				return fmt.Errorf("%s 第 %d 个正则处理器：%v", scope, step, err)
 			}
 		case "keep_fields", "drop_fields":
 			if len(p.Fields) == 0 || len(p.Fields) > 100 {
-				return fmt.Errorf("查询 %s 第 %d 个字段过滤器请配置 1–100 个字段名", refID, step)
+				return fmt.Errorf("%s 第 %d 个字段过滤器请配置 1–100 个字段名", scope, step)
 			}
 			for _, f := range p.Fields {
 				if strings.TrimSpace(f) == "" || len(f) > 128 {
-					return fmt.Errorf("查询 %s 第 %d 个字段过滤器存在空或过长的字段名", refID, step)
+					return fmt.Errorf("%s 第 %d 个字段过滤器存在空或过长的字段名", scope, step)
 				}
 			}
 		default:
-			return fmt.Errorf("查询 %s 第 %d 个日志处理器类型无效：%s（仅支持 json、regex、split_array、keep_fields、drop_fields）", refID, step, p.Type)
+			return fmt.Errorf("%s 第 %d 个数据处理器类型无效：%s（仅支持 json、regex、split_array、keep_fields、drop_fields）", scope, step, p.Type)
 		}
 	}
 	return nil
@@ -497,6 +497,47 @@ func applyLogProcessorsToRows(rows []map[string]any, list []LogProcessor) []map[
 		current, _ = proc.applyRows(current)
 	}
 	return current
+}
+
+// applyProcessorsToOutputValue 对任意输出字段提取出的值（数组、对象或标量）应用处理器链。
+func applyProcessorsToOutputValue(selected any, list []LogProcessor) (any, error) {
+	if len(list) == 0 {
+		return selected, nil
+	}
+	compiled, err := compileLogProcessors(list)
+	if err != nil || len(compiled) == 0 {
+		return selected, err
+	}
+	switch val := selected.(type) {
+	case []any:
+		if len(val) == 0 {
+			return []any{}, nil
+		}
+		rows := make([]map[string]any, 0, len(val))
+		for _, item := range val {
+			if obj, ok := item.(map[string]any); ok {
+				rows = append(rows, cloneRow(obj))
+			} else {
+				rows = append(rows, map[string]any{"content": item})
+			}
+		}
+		for _, proc := range compiled {
+			rows, _ = proc.applyRows(rows)
+		}
+		return rows, nil
+	case map[string]any:
+		rows := []map[string]any{cloneRow(val)}
+		for _, proc := range compiled {
+			rows, _ = proc.applyRows(rows)
+		}
+		return previewOutputValue(rows), nil
+	default:
+		rows := []map[string]any{{"content": val}}
+		for _, proc := range compiled {
+			rows, _ = proc.applyRows(rows)
+		}
+		return previewOutputValue(rows), nil
+	}
 }
 
 func previewOutputValue(rows []map[string]any) any {

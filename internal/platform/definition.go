@@ -43,6 +43,9 @@ type Definition struct {
 
 func (d *Definition) normalize() {
 	d.Approval.normalize()
+	for i := range d.OutputFields {
+		d.OutputFields[i].Processors = normalizeLogProcessors(d.OutputFields[i].Processors)
+	}
 	if d.isGrafana() {
 		d.URL = ""
 		d.Method = ""

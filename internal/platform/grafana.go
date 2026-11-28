@@ -632,7 +632,7 @@ func (d Definition) validateGrafana() error {
 			if q.resolvedDataType() != "logs" {
 				return fmt.Errorf("查询 %s 仅 logs 数据类型支持配置日志处理器", refID)
 			}
-			if err := validateLogProcessors(refID, q.LogProcessors); err != nil {
+			if err := validateLogProcessors("查询 "+refID, q.LogProcessors); err != nil {
 				return err
 			}
 		}

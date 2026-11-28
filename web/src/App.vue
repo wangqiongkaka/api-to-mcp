@@ -25,7 +25,7 @@ import {
   grafanaDatasourceFamily,
   podExample,
 } from "./types";
-import { responsePaths } from "./outputPaths";
+import { extractPointerSample, responsePaths } from "./outputPaths";
 
 const user = ref<User | null>(null);
 const loading = ref(true);
@@ -683,6 +683,11 @@ function removeOutputField(index: number) {
     fields.splice(index, 1);
     if (!fields.length) editor.value.outputFields = undefined;
   }
+}
+
+function sampleForOutputField(field: { source: "response" | "fixed"; value: string }) {
+  if (field.source !== "response" || !successfulResponse.value || !result.value) return "";
+  return extractPointerSample(result.value.body, field.value);
 }
 
 function extractQuery() {
@@ -1770,12 +1775,6 @@ onUnmounted(() => {
                             @input="grafanaExtractionError = ''"
                           />
                         </label>
-                        <GrafanaLogProcessors
-                          v-if="q.dataType === 'logs'"
-                          v-model="q.logProcessors"
-                          :ref-id="q.refId || String(qIndex + 1)"
-                          :disabled="published || saving"
-                        />
                       </div>
                       <p v-if="grafanaPlaceholderNames.length" class="body-template-tokens">
                         <span>已识别占位符</span>
@@ -2093,36 +2092,48 @@ onUnmounted(() => {
                     </p>
                   </div>
                   <div v-if="editor.outputFields?.length" class="form-content">
-                    <div v-for="(field, index) in editor.outputFields" :key="index" class="output-field">
-                      <label>
-                        输出名称
-                        <input v-model.trim="field.name" required maxlength="128" placeholder="如 userId" />
-                      </label>
-                      <label>
-                        值来源
-                        <select v-model="field.source" @change="field.value = ''">
-                          <option value="response">上游响应</option>
-                          <option value="fixed">固定值</option>
-                        </select>
-                      </label>
-                      <label class="output-value">
-                        {{ field.source === 'response' ? '响应路径' : '固定 JSON 值' }}
-                        <input
-                          v-model="field.value"
-                          required
-                          spellcheck="false"
-                          maxlength="32768"
-                          :placeholder="field.source === 'response' ? '如 /data/users/*/id' : '如 &quot;crm&quot;、true 或 1'"
-                        />
-                      </label>
-                      <button
-                        type="button"
-                        class="icon-button danger-text"
-                        :aria-label="`删除输出字段 ${index + 1}`"
-                        @click="removeOutputField(index)"
-                      >
-                        ×
-                      </button>
+                    <div v-for="(field, index) in editor.outputFields" :key="index" class="output-field-card">
+                      <div class="output-field">
+                        <label>
+                          输出名称
+                          <input v-model.trim="field.name" required maxlength="128" placeholder="如 userId" />
+                        </label>
+                        <label>
+                          值来源
+                          <select
+                            v-model="field.source"
+                            @change="field.value = ''; field.processors = undefined"
+                          >
+                            <option value="response">上游响应</option>
+                            <option value="fixed">固定值</option>
+                          </select>
+                        </label>
+                        <label class="output-value">
+                          {{ field.source === 'response' ? '响应路径' : '固定 JSON 值' }}
+                          <input
+                            v-model="field.value"
+                            required
+                            spellcheck="false"
+                            maxlength="32768"
+                            :placeholder="field.source === 'response' ? '如 /data/users/*/id' : '如 &quot;crm&quot;、true 或 1'"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          class="icon-button danger-text"
+                          :aria-label="`删除输出字段 ${index + 1}`"
+                          @click="removeOutputField(index)"
+                        >
+                          ×
+                        </button>
+                      </div>
+                      <GrafanaLogProcessors
+                        v-if="field.source === 'response'"
+                        v-model="field.processors"
+                        :scope-label="field.name || `输出字段 ${index + 1}`"
+                        :sample-hint="sampleForOutputField(field)"
+                        :disabled="published || saving"
+                      />
                     </div>
                   </div>
                 </section>

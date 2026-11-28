@@ -10,7 +10,8 @@ import {
 
 const props = defineProps<{
   modelValue?: LogProcessor[];
-  refId: string;
+  scopeLabel: string;
+  sampleHint?: string;
   disabled?: boolean;
 }>();
 
@@ -60,7 +61,7 @@ function helperOf(index: number): RegexHelperState {
   if (!regexHelpers[index]) {
     regexHelpers[index] = {
       open: false,
-      sample: sample.value,
+      sample: sample.value || props.sampleHint || "",
       pendingStart: 0,
       pendingEnd: 0,
       pendingText: "",
@@ -75,10 +76,25 @@ function helperOf(index: number): RegexHelperState {
 function toggleRegexHelper(index: number) {
   const h = helperOf(index);
   h.open = !h.open;
-  if (h.open && !h.sample && sample.value) {
-    h.sample = sample.value;
+  if (h.open && !h.sample) {
+    h.sample = sample.value || props.sampleHint || "";
   }
   h.error = "";
+}
+
+function fillHelperFromDebug(index: number) {
+  if (!props.sampleHint) return;
+  const h = helperOf(index);
+  h.sample = props.sampleHint;
+  h.marks = [];
+  h.pendingText = "";
+  h.error = "";
+}
+
+function fillPreviewFromDebug() {
+  if (!props.sampleHint) return;
+  sample.value = props.sampleHint;
+  previewError.value = "";
 }
 
 function captureSelection(index: number, el: HTMLTextAreaElement | null) {
@@ -103,7 +119,7 @@ function addSelectionMark(index: number) {
   const h = helperOf(index);
   h.error = "";
   if (!h.pendingText || h.pendingEnd <= h.pendingStart) {
-    h.error = "请先在上方日志样例中用鼠标划选一段文本";
+    h.error = "请先在上方样例中用鼠标划选一段文本";
     return;
   }
   const name = h.fieldName.trim();
@@ -143,7 +159,7 @@ function applyGeneratedRegex(index: number) {
       processors.value.map((item, i) =>
         i === index ? { ...item, regex: generated.regex, keys: generated.keys } : item,
       ),
-      h.sample,
+      sample.value || h.sample,
     );
   } catch (e) {
     h.error = e instanceof Error ? e.message : "生成正则失败";
@@ -253,15 +269,15 @@ async function runPreview() {
 <template>
   <details class="log-processor-box" :open="processors.length > 0">
     <summary>
-      <span>日志处理（JSON / 正则 / 拆数组 / 字段过滤）</span>
+      <span>数据处理（JSON / 正则 / 拆数组 / 字段过滤）</span>
       <span v-if="processors.length" class="badge neutral">已配置 {{ processors.length }} 步</span>
     </summary>
     <div class="log-processor-body">
       <div class="log-processor-toolbar">
         <div class="group-title">
-          <span class="muted">按顺序处理每条 Logs 记录，精简后再返回给大模型分析。</span>
+          <span class="muted">按顺序处理该输出字段的值（支持数组逐项、对象与文本），精简后再返回给大模型。</span>
           <HelpHint
-            label="SLS 日志处理说明"
+            label="SLS 数据处理说明"
             text="参考阿里云 SLS 处理器链：支持正则解析（兼容前瞻/后顾断言与划选生成）、JSON 展开、JSONArray 拆分为多行、以及字段保留/剔除。原始字段留空时自动识别 _msg / Line / content / message。"
           />
         </div>
@@ -317,20 +333,20 @@ async function runPreview() {
                 type="button"
                 class="icon-button small-icon"
                 :disabled="idx === 0"
-                :aria-label="`查询 ${refId} 处理器 ${idx + 1} 上移`"
+                :aria-label="`${scopeLabel} 处理器 ${idx + 1} 上移`"
                 @click="moveProcessor(idx, -1)"
               >↑</button>
               <button
                 type="button"
                 class="icon-button small-icon"
                 :disabled="idx === processors.length - 1"
-                :aria-label="`查询 ${refId} 处理器 ${idx + 1} 下移`"
+                :aria-label="`${scopeLabel} 处理器 ${idx + 1} 下移`"
                 @click="moveProcessor(idx, 1)"
               >↓</button>
               <button
                 type="button"
                 class="icon-button danger-text small-icon"
-                :aria-label="`删除查询 ${refId} 处理器 ${idx + 1}`"
+                :aria-label="`删除 ${scopeLabel} 处理器 ${idx + 1}`"
                 @click="removeProcessor(idx)"
               >×</button>
             </div>
@@ -343,7 +359,7 @@ async function runPreview() {
                 <input
                   :value="p.sourceKey ?? ''"
                   maxlength="128"
-                  :aria-label="`查询 ${refId} 处理器 ${idx + 1} 原始字段`"
+                  :aria-label="`${scopeLabel} 处理器 ${idx + 1} 原始字段`"
                   placeholder="留空自动识别 _msg / Line / content"
                   @input="patchProcessor(idx, { sourceKey: ($event.target as HTMLInputElement).value })"
                 />
@@ -355,7 +371,7 @@ async function runPreview() {
                   min="0"
                   max="20"
                   :value="p.expandDepth ?? 1"
-                  :aria-label="`查询 ${refId} 处理器 ${idx + 1} 展开深度`"
+                  :aria-label="`${scopeLabel} 处理器 ${idx + 1} 展开深度`"
                   @input="patchProcessor(idx, { expandDepth: Number(($event.target as HTMLInputElement).value) || 0 })"
                 />
               </label>
@@ -364,7 +380,7 @@ async function runPreview() {
                 <input
                   :value="p.expandConnector ?? '.'"
                   maxlength="8"
-                  :aria-label="`查询 ${refId} 处理器 ${idx + 1} 连接符`"
+                  :aria-label="`${scopeLabel} 处理器 ${idx + 1} 连接符`"
                   placeholder="."
                   @input="patchProcessor(idx, { expandConnector: ($event.target as HTMLInputElement).value })"
                 />
@@ -374,7 +390,7 @@ async function runPreview() {
                 <input
                   :value="p.prefix ?? ''"
                   maxlength="64"
-                  :aria-label="`查询 ${refId} 处理器 ${idx + 1} 前缀`"
+                  :aria-label="`${scopeLabel} 处理器 ${idx + 1} 前缀`"
                   placeholder="如 payload"
                   @input="patchProcessor(idx, { prefix: ($event.target as HTMLInputElement).value })"
                 />
@@ -407,7 +423,7 @@ async function runPreview() {
                 <input
                   :value="p.sourceKey ?? ''"
                   maxlength="128"
-                  :aria-label="`查询 ${refId} 处理器 ${idx + 1} 原始字段`"
+                  :aria-label="`${scopeLabel} 处理器 ${idx + 1} 原始字段`"
                   placeholder="如 events；留空自动识别 _msg / Line / content"
                   @input="patchProcessor(idx, { sourceKey: ($event.target as HTMLInputElement).value })"
                 />
@@ -417,7 +433,7 @@ async function runPreview() {
                 <input
                   :value="p.targetKey ?? ''"
                   maxlength="128"
-                  :aria-label="`查询 ${refId} 处理器 ${idx + 1} 目标字段`"
+                  :aria-label="`${scopeLabel} 处理器 ${idx + 1} 目标字段`"
                   placeholder="留空时对象元素直接合并进当前行，标量放入 item"
                   @input="patchProcessor(idx, { targetKey: ($event.target as HTMLInputElement).value })"
                 />
@@ -450,7 +466,7 @@ async function runPreview() {
                 <input
                   :value="p.sourceKey ?? ''"
                   maxlength="128"
-                  :aria-label="`查询 ${refId} 处理器 ${idx + 1} 原始字段`"
+                  :aria-label="`${scopeLabel} 处理器 ${idx + 1} 原始字段`"
                   placeholder="留空自动识别 _msg / Line / content"
                   @input="patchProcessor(idx, { sourceKey: ($event.target as HTMLInputElement).value })"
                 />
@@ -459,7 +475,7 @@ async function runPreview() {
                 提取字段名（逗号分隔，命名捕获组可留空）
                 <input
                   :value="(p.keys ?? []).join(', ')"
-                  :aria-label="`查询 ${refId} 处理器 ${idx + 1} 提取字段`"
+                  :aria-label="`${scopeLabel} 处理器 ${idx + 1} 提取字段`"
                   placeholder="例如：ip, level, payload"
                   @input="patchProcessor(idx, { keys: splitList(($event.target as HTMLInputElement).value) })"
                 />
@@ -467,7 +483,7 @@ async function runPreview() {
             </div>
             <div>
               <div class="url-heading">
-                <label :for="`regex-input-${refId}-${idx}`">
+                <label :for="`regex-input-${scopeLabel}-${idx}`">
                   正则表达式（支持 (...)、(?P&lt;名&gt;...) 及前瞻/后顾断言）
                 </label>
                 <button
@@ -480,34 +496,41 @@ async function runPreview() {
                 </button>
               </div>
               <input
-                :id="`regex-input-${refId}-${idx}`"
+                :id="`regex-input-${scopeLabel}-${idx}`"
                 class="code-input"
                 required
                 maxlength="4096"
                 spellcheck="false"
                 :value="p.regex ?? ''"
-                :aria-label="`查询 ${refId} 处理器 ${idx + 1} 正则表达式`"
+                :aria-label="`${scopeLabel} 处理器 ${idx + 1} 正则表达式`"
                 placeholder='例如：^(\S+)\s+\[(\w+)\]\s+(\{.*\})$'
                 @input="patchProcessor(idx, { regex: ($event.target as HTMLInputElement).value })"
               />
             </div>
 
             <div v-if="helperOf(idx).open && !disabled" class="regex-helper">
-              <label>
-                1. 粘贴日志样例，用鼠标划选要提取的文本片段
-                <textarea
-                  v-model="helperOf(idx).sample"
-                  rows="2"
-                  spellcheck="false"
-                  class="code-input"
-                  :aria-label="`查询 ${refId} 处理器 ${idx + 1} 划选样例`"
-                  placeholder='例如：10.20.30.40 [ERROR] {"trace_id":"tr-1","msg":"timeout"}'
-                  @select="captureSelection(idx, $event.target as HTMLTextAreaElement)"
-                  @mouseup="captureSelection(idx, $event.target as HTMLTextAreaElement)"
-                  @keyup="captureSelection(idx, $event.target as HTMLTextAreaElement)"
-                  @input="helperOf(idx).marks = []; helperOf(idx).pendingText = ''"
-                />
-              </label>
+              <div class="url-heading">
+                <label :for="`regex-sample-${scopeLabel}-${idx}`">1. 粘贴或填入调试样例，用鼠标划选要提取的片段</label>
+                <button
+                  v-if="sampleHint"
+                  type="button"
+                  class="text-button"
+                  @click="fillHelperFromDebug(idx)"
+                >填入调试样例</button>
+              </div>
+              <textarea
+                :id="`regex-sample-${scopeLabel}-${idx}`"
+                v-model="helperOf(idx).sample"
+                rows="2"
+                spellcheck="false"
+                class="code-input"
+                :aria-label="`${scopeLabel} 处理器 ${idx + 1} 划选样例`"
+                placeholder='例如：10.20.30.40 [ERROR] {"trace_id":"tr-1","msg":"timeout"}'
+                @select="captureSelection(idx, $event.target as HTMLTextAreaElement)"
+                @mouseup="captureSelection(idx, $event.target as HTMLTextAreaElement)"
+                @keyup="captureSelection(idx, $event.target as HTMLTextAreaElement)"
+                @input="helperOf(idx).marks = []; helperOf(idx).pendingText = ''"
+              />
               <div class="regex-mark-row">
                 <div class="grow">
                   <span class="muted">当前划选：</span>
@@ -518,7 +541,7 @@ async function runPreview() {
                   v-model.trim="helperOf(idx).fieldName"
                   class="mark-name-input"
                   maxlength="64"
-                  :aria-label="`查询 ${refId} 处理器 ${idx + 1} 划选字段名`"
+                  :aria-label="`${scopeLabel} 处理器 ${idx + 1} 划选字段名`"
                   placeholder="字段名，如 ip"
                 />
                 <button
@@ -587,7 +610,7 @@ async function runPreview() {
               <input
                 required
                 :value="(p.fields ?? []).join(', ')"
-                :aria-label="`查询 ${refId} 处理器 ${idx + 1} 字段列表`"
+                :aria-label="`${scopeLabel} 处理器 ${idx + 1} 字段列表`"
                 placeholder="例如：Time, ip, level, trace_id, msg"
                 @input="patchProcessor(idx, { fields: splitList(($event.target as HTMLInputElement).value) })"
               />
@@ -598,24 +621,32 @@ async function runPreview() {
 
       <div v-if="processors.length" class="log-processor-preview">
         <div class="url-heading">
-          <label :for="`log-sample-${refId}`">日志样例验证（在线测试处理效果）</label>
-          <button
-            type="button"
-            class="button small"
-            :disabled="previewBusy || !sample.trim()"
-            @click="runPreview"
-          >
-            {{ previewBusy ? "验证中…" : "验证处理效果" }}
-          </button>
+          <label :for="`log-sample-${scopeLabel}`">单条样例验证（在线分步调试）</label>
+          <div class="button-row">
+            <button
+              v-if="sampleHint"
+              type="button"
+              class="text-button"
+              @click="fillPreviewFromDebug"
+            >填入调试样例</button>
+            <button
+              type="button"
+              class="button small"
+              :disabled="previewBusy || !sample.trim()"
+              @click="runPreview"
+            >
+              {{ previewBusy ? "验证中…" : "验证处理效果" }}
+            </button>
+          </div>
         </div>
         <textarea
-          :id="`log-sample-${refId}`"
+          :id="`log-sample-${scopeLabel}`"
           v-model="sample"
           rows="2"
           spellcheck="false"
           class="code-input"
-          :aria-label="`查询 ${refId} 日志样例`"
-          placeholder='粘贴一条原始日志或单行 JSON，例如：10.0.0.8 [ERROR] {"trace_id":"t-1","msg":"timeout","debug":"noise"}'
+          :aria-label="`${scopeLabel} 日志样例`"
+          placeholder='粘贴一条原始文本或单行 JSON，或点击上方「填入调试样例」'
         />
         <div v-if="previewError" class="alert error" role="alert">{{ previewError }}</div>
         <div v-if="previewResult" class="log-preview-output">
@@ -629,7 +660,7 @@ async function runPreview() {
               {{ s.type === "split_array" && s.matched ? `拆出 ${s.rowCount ?? 0} 行` : s.matched ? "已匹配" : "未匹配" }}
             </span>
           </div>
-          <pre :aria-label="`查询 ${refId} 日志处理预览结果`">{{ JSON.stringify(previewResult.output, null, 2) }}</pre>
+          <pre :aria-label="`${scopeLabel} 处理预览结果`">{{ JSON.stringify(previewResult.output, null, 2) }}</pre>
         </div>
       </div>
     </div>

@@ -74,3 +74,55 @@ func TestOutputFieldsCanExtractEveryArrayItem(t *testing.T) {
 		t.Fatal("缺失字段的记录被静默跳过")
 	}
 }
+
+func TestOutputFieldProcessorsForHTTPAndGrafana(t *testing.T) {
+	// 1. 字符串数组提取（如 /results/B/frames/0/rows/*/_msg 或 HTTP 日志数组）+ 正则 -> JSON -> 拆数组 -> 保留字段
+	fields := []OutputField{
+		{
+			Name:   "events",
+			Source: "response",
+			Value:  "/data/logs/*/raw",
+			Processors: []LogProcessor{
+				{Type: "regex", Regex: `^(\S+)\s+\[(\w+)\]\s+(\{.*\})$`, Keys: []string{"ip", "level", "payload"}},
+				{Type: "json", SourceKey: "payload", ExpandDepth: 1},
+				{Type: "split_array", SourceKey: "items"},
+				{Type: "keep_fields", Fields: []string{"ip", "level", "code", "msg"}},
+			},
+		},
+		{
+			Name:   "single",
+			Source: "response",
+			Value:  "/data/summary",
+			Processors: []LogProcessor{
+				{Type: "regex", Regex: `(?<=latency=)(?P<ms>\d+)(?=ms)`},
+			},
+		},
+	}
+	if err := validateOutputFields(fields); err != nil {
+		t.Fatalf("合法的输出字段处理器应通过校验：%v", err)
+	}
+	raw := []byte(`{
+		"data": {
+			"logs": [
+				{"raw": "10.0.0.8 [ERROR] {\"items\":[{\"code\":\"E1\",\"msg\":\"timeout\",\"noise\":1},{\"code\":\"E2\",\"msg\":\"oom\",\"noise\":2}]}", "pod_uid": "drop"}
+			],
+			"summary": "host=db-1 latency=256ms ok"
+		}
+	}`)
+	got, err := mapOutput(fields, raw)
+	if err != nil {
+		t.Fatalf("输出字段处理器执行失败：%v", err)
+	}
+	want := `{"events":[{"code":"E1","ip":"10.0.0.8","level":"ERROR","msg":"timeout"},{"code":"E2","ip":"10.0.0.8","level":"ERROR","msg":"oom"}],"single":{"ms":"256"}}`
+	if string(got) != want {
+		t.Fatalf("输出字段处理结果不符：\ngot:  %s\nwant: %s", got, want)
+	}
+
+	// 2. 固定值输出字段不允许配置处理器
+	bad := []OutputField{
+		{Name: "fixed_bad", Source: "fixed", Value: `"ok"`, Processors: []LogProcessor{{Type: "json"}}},
+	}
+	if err := validateOutputFields(bad); err == nil {
+		t.Fatal("固定值输出字段配置处理器应被拒绝")
+	}
+}

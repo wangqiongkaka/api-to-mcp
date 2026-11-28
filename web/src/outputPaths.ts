@@ -56,3 +56,41 @@ export function responsePaths(body: string) {
   appendOptions("", 0);
   return options;
 }
+
+/** 按 JSON Pointer 从调试响应中提取首条真实样例，便于一键带入数据处理与划选生成正则。 */
+export function extractPointerSample(body: string, pointer: string): string {
+  if (!body || !pointer || !pointer.startsWith("/")) return "";
+  let current: unknown;
+  try {
+    current = JSON.parse(body);
+  } catch {
+    return "";
+  }
+  const parts = pointer
+    .slice(1)
+    .split("/")
+    .map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"));
+  for (const part of parts) {
+    if (Array.isArray(current)) {
+      if (part === "*") {
+        if (!current.length) return "";
+        current = current[0];
+        continue;
+      }
+      const idx = Number(part);
+      if (!Number.isInteger(idx) || idx < 0 || idx >= current.length) return "";
+      current = current[idx];
+    } else if (current !== null && typeof current === "object") {
+      if (!(part in (current as Record<string, unknown>))) return "";
+      current = (current as Record<string, unknown>)[part];
+    } else {
+      return "";
+    }
+  }
+  if (Array.isArray(current)) {
+    if (!current.length) return "";
+    current = current[0];
+  }
+  if (current === null || current === undefined) return "";
+  return typeof current === "string" ? current : JSON.stringify(current);
+}

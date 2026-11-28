@@ -1202,6 +1202,15 @@ tbody tr:last-child td {
 .parameter-heading h2 {
   font-size: 15px;
 }
+.output-field-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #fafbfd;
+  min-width: 0;
+}
 .output-field {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 100px minmax(0, 1.7fr) auto;

@@ -120,6 +120,7 @@ export interface OutputField {
   name: string;
   source: "response" | "fixed";
   value: string;
+  processors?: LogProcessor[];
 }
 
 export interface Tool extends Definition {
@@ -301,7 +302,18 @@ export function definitionOf(d: Definition): Definition {
         }
       : undefined,
     parameters: (d.parameters ?? []).map((p) => ({ ...p })),
-    outputFields: d.outputFields?.length ? d.outputFields.map((field) => ({ ...field })) : undefined,
+    outputFields: d.outputFields?.length
+      ? d.outputFields.map((field) => ({
+          ...field,
+          processors: field.processors?.length
+            ? field.processors.map((p) => ({
+                ...p,
+                keys: p.keys ? [...p.keys] : undefined,
+                fields: p.fields ? [...p.fields] : undefined,
+              }))
+            : undefined,
+        }))
+      : undefined,
     approval: d.approval ? { ...d.approval } : undefined,
   };
 }

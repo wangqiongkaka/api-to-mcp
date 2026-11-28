@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -288,7 +289,7 @@ func TestPlatformIntegration(t *testing.T) {
 		t.Fatalf("输出配置保存失败：%d", code)
 	}
 	var mappedTools []ToolRecord
-	if code := jsonRequest(t, alice, "GET", server.URL+"/api/tools", nil, &mappedTools); code != 200 || len(mappedTools) != 1 || len(mappedTools[0].OutputFields) != 2 || mappedTools[0].OutputFields[0] != mapped.OutputFields[0] {
+	if code := jsonRequest(t, alice, "GET", server.URL+"/api/tools", nil, &mappedTools); code != 200 || len(mappedTools) != 1 || len(mappedTools[0].OutputFields) != 2 || !reflect.DeepEqual(mappedTools[0].OutputFields[0], mapped.OutputFields[0]) {
 		t.Fatalf("输出配置读取失败：%d，%+v", code, mappedTools)
 	}
 	if code := jsonRequest(t, alice, "POST", address+"/publish", map[string]bool{"published": true}, nil); code != 200 {
@@ -929,7 +930,29 @@ func TestGrafanaIntegration(t *testing.T) {
 		t.Fatalf("日志处理预览接口异常：%d %+v", code, previewRes)
 	}
 
-	// 发布并通过真实 MCP 客户端调用（覆盖 from/to）
+	// 配置工具级输出字段处理器（从 /results/B/frames/0/rows 提取并做正则+JSON+保留字段），验证预览接口与 MCP 输出
+	def.OutputFields = []OutputField{
+		{
+			Name:   "logs",
+			Source: "response",
+			Value:  "/results/B/frames/0/rows/*/_msg",
+			Processors: []LogProcessor{
+				{Type: "regex", Regex: `^(\S+)\s+\[(\w+)\]\s+(\{.*\})$`, Keys: []string{"ip", "level", "payload"}},
+				{Type: "json", SourceKey: "payload", ExpandDepth: 1},
+				{Type: "keep_fields", Fields: []string{"ip", "level", "trace_id", "msg"}},
+			},
+		},
+		{Name: "range", Source: "response", Value: "/results/A/frames/0/rows/0/Range"},
+		{Name: "metricType", Source: "response", Value: "/results/A/dataType"},
+		{Name: "logType", Source: "response", Value: "/results/B/dataType"},
+		{Name: "expr", Source: "response", Value: "/results/A/frames/0/rows/0/Expr"},
+	}
+	def.Grafana.Queries[1].LogProcessors = nil
+	if code := jsonRequest(t, member, "PUT", fmt.Sprintf("%s/api/tools/%d", server.URL, tool.ID), def, &tool); code != 200 {
+		t.Fatalf("更新输出字段处理器失败：%d", code)
+	}
+
+	// 发布并通过真实 MCP 客户端调用（覆盖 from/to），验证输出字段处理器精简后的 MCP 返回值
 	if code := jsonRequest(t, member, "POST", fmt.Sprintf("%s/api/tools/%d/publish", server.URL, tool.ID), map[string]bool{"published": true}, nil); code != 200 {
 		t.Fatalf("发布 Grafana 工具失败：%d", code)
 	}
@@ -965,7 +988,7 @@ func TestGrafanaIntegration(t *testing.T) {
 		t.Fatalf("MCP 调用 Grafana 工具失败：%v %+v", err, mcpRes)
 	}
 	text := mcpRes.Content[0].(*mcp.TextContent).Text
-	if !strings.Contains(text, "10.9.9.9") || !strings.Contains(text, "now-15m..now") || !strings.Contains(text, `"dataType":"metrics"`) || !strings.Contains(text, `"dataType":"logs"`) || !strings.Contains(text, `"trace_id":"tr-int-1"`) || strings.Contains(text, "noisy-pod-uid") {
+	if !strings.Contains(text, "10.9.9.9") || !strings.Contains(text, "now-15m..now") || !strings.Contains(text, `"metricType":"metrics"`) || !strings.Contains(text, `"logType":"logs"`) || !strings.Contains(text, `"trace_id":"tr-int-1"`) || strings.Contains(text, "noisy-pod-uid") || strings.Contains(text, `"debug":"drop"`) {
 		t.Fatalf("MCP 返回内容不符：%s", text)
 	}
 }

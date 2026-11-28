@@ -11,9 +11,10 @@ import (
 )
 
 type OutputField struct {
-	Name   string `json:"name"`
-	Source string `json:"source"`
-	Value  string `json:"value"`
+	Name       string         `json:"name"`
+	Source     string         `json:"source"`
+	Value      string         `json:"value"`
+	Processors []LogProcessor `json:"processors,omitempty"`
 }
 
 var invalidPointerEscape = regexp.MustCompile(`~([^01]|$)`)
@@ -37,9 +38,17 @@ func validateOutputFields(fields []OutputField) error {
 			if !strings.HasPrefix(field.Value, "/") || invalidPointerEscape.MatchString(field.Value) {
 				return fmt.Errorf("输出字段 %q 的来源路径须以 / 开头并使用有效的 JSON Pointer 转义", field.Name)
 			}
+			if len(field.Processors) > 0 {
+				if err := validateLogProcessors(fmt.Sprintf("输出字段 %q", field.Name), normalizeLogProcessors(field.Processors)); err != nil {
+					return err
+				}
+			}
 		case "fixed":
 			if !json.Valid([]byte(field.Value)) {
 				return fmt.Errorf("输出字段 %q 的固定值必须是有效的 JSON", field.Name)
+			}
+			if len(field.Processors) > 0 {
+				return fmt.Errorf("固定值输出字段 %q 不支持配置数据处理器", field.Name)
 			}
 		default:
 			return fmt.Errorf("输出字段 %q 的来源无效", field.Name)
@@ -67,6 +76,13 @@ func mapOutput(fields []OutputField, data []byte) ([]byte, error) {
 			selected, ok := outputValue(body, field.Value)
 			if !ok {
 				return nil, fmt.Errorf("输出字段 %q 找不到上游路径 %q", field.Name, field.Value)
+			}
+			if len(field.Processors) > 0 {
+				var err error
+				selected, err = applyProcessorsToOutputValue(selected, field.Processors)
+				if err != nil {
+					return nil, fmt.Errorf("输出字段 %q 数据处理失败：%v", field.Name, err)
+				}
 			}
 			encoded, err := json.Marshal(selected)
 			if err != nil {
