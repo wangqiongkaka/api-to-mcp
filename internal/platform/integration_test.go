@@ -659,3 +659,269 @@ func TestPlatformIntegration(t *testing.T) {
 		t.Fatal("退出登录未撤销会话")
 	}
 }
+
+func TestGrafanaIntegration(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("设置 TEST_DATABASE_URL 后运行 Grafana 集成测试")
+	}
+	u, err := url.Parse(dsn)
+	if err != nil || !strings.HasSuffix(u.Path, "_test") {
+		t.Fatal("集成测试须使用以 _test 结尾的独立数据库")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	root, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	namespace := fmt.Sprintf("grafana_int_%d", time.Now().UnixNano())
+	if _, err = root.Exec(ctx, "CREATE SCHEMA "+namespace); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if _, err := root.Exec(context.Background(), "DROP SCHEMA "+namespace+" CASCADE"); err != nil {
+			t.Error(err)
+		}
+	}()
+	query := u.Query()
+	query.Set("search_path", namespace)
+	u.RawQuery = query.Encode()
+
+	// 模拟 Grafana 服务：校验 Bearer / Basic / Cookie 三种认证方式，响应 /api/datasources 与 /api/ds/query
+	grafana := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authOK := r.Header.Get("Authorization") == "Bearer glsa_test_token" ||
+			r.Header.Get("Cookie") == "grafana_session=cookie_ok"
+		if user, pass, ok := r.BasicAuth(); ok && user == "ops" && pass == "ops-secret-123" {
+			authOK = true
+		}
+		if !authOK {
+			http.Error(w, `{"message":"Unauthorized"}`, 401)
+			return
+		}
+		switch r.URL.Path {
+		case "/api/datasources":
+			writeJSON(w, 200, []map[string]any{
+				{"uid": "prom-1", "name": "Prometheus", "type": "prometheus", "isDefault": true, "password": "secret-should-not-leak"},
+				{"uid": "vmlogs-1", "name": "VictoriaLogs", "type": "victoriametrics-logs-datasource"},
+			})
+		case "/api/ds/query":
+			var reqBody struct {
+				From    string           `json:"from"`
+				To      string           `json:"to"`
+				Queries []map[string]any `json:"queries"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+				http.Error(w, "bad body", 400)
+				return
+			}
+			results := map[string]any{}
+			for _, q := range reqBody.Queries {
+				refID := q["refId"].(string)
+				expr, _ := q["expr"].(string)
+				results[refID] = map[string]any{
+					"status": 200,
+					"frames": []map[string]any{{
+						"schema": map[string]any{
+							"name":  refID,
+							"refId": refID,
+							"fields": []map[string]any{
+								{"name": "Time", "type": "time"},
+								{"name": "Expr", "type": "string"},
+								{"name": "Range", "type": "string"},
+							},
+						},
+						"data": map[string]any{
+							"values": [][]any{
+								{int64(1700000000000)},
+								{expr},
+								{reqBody.From + ".." + reqBody.To},
+							},
+						},
+					}},
+				}
+			}
+			writeJSON(w, 200, map[string]any{"results": results})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer grafana.Close()
+
+	cfg := Config{
+		DatabaseURL:    u.String(),
+		EncryptionKey:  base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32)),
+		AdminUsername:  "admin",
+		AdminPassword:  "grafana-admin-password",
+		AllowedOrigins: []string{grafana.URL},
+		WebDist:        t.TempDir(),
+	}
+	a, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	server := httptest.NewServer(a.Handler())
+	defer server.Close()
+
+	newClient := func() *http.Client {
+		jar, _ := cookiejar.New(nil)
+		return &http.Client{Jar: jar, Timeout: 10 * time.Second}
+	}
+	admin, member := newClient(), newClient()
+	if code := jsonRequest(t, admin, "POST", server.URL+"/api/auth/login", map[string]string{"username": "admin", "password": "grafana-admin-password"}, nil); code != 200 {
+		t.Fatalf("管理员登录失败：%d", code)
+	}
+	if code := jsonRequest(t, member, "POST", server.URL+"/api/auth/register", map[string]string{"username": "alice", "password": "alice-password-123"}, nil); code != 200 {
+		t.Fatalf("成员注册失败：%d", code)
+	}
+
+	// 普通成员不能创建连接
+	if code := jsonRequest(t, member, "POST", server.URL+"/api/grafana/connections", map[string]any{
+		"name": "member-try", "baseUrl": grafana.URL, "authType": "bearer", "token": "glsa_test_token",
+	}, nil); code != 403 {
+		t.Fatalf("普通成员创建连接应返回 403，实际 %d", code)
+	}
+
+	// 管理员分别验证 Bearer、Basic、Cookie 三种连接
+	var bearerConn, basicConn, cookieConn GrafanaConnection
+	if code := jsonRequest(t, admin, "POST", server.URL+"/api/grafana/connections", map[string]any{
+		"name": "Prod Grafana", "baseUrl": grafana.URL, "authType": "bearer", "token": "glsa_test_token",
+	}, &bearerConn); code != 201 {
+		t.Fatalf("创建 Bearer 连接失败：%d", code)
+	}
+	if code := jsonRequest(t, admin, "POST", server.URL+"/api/grafana/connections", map[string]any{
+		"name": "Basic Grafana", "baseUrl": grafana.URL, "authType": "basic", "username": "ops", "password": "ops-secret-123",
+	}, &basicConn); code != 201 || basicConn.Username != "ops" {
+		t.Fatalf("创建 Basic 连接失败：%d %+v", code, basicConn)
+	}
+	if code := jsonRequest(t, admin, "POST", server.URL+"/api/grafana/connections", map[string]any{
+		"name": "Cookie Grafana", "baseUrl": grafana.URL, "authType": "cookie", "cookie": "grafana_session=cookie_ok",
+	}, &cookieConn); code != 201 {
+		t.Fatalf("创建 Cookie 连接失败：%d", code)
+	}
+	for _, cid := range []int64{bearerConn.ID, basicConn.ID, cookieConn.ID} {
+		var testRes struct {
+			OK              bool `json:"ok"`
+			DatasourceCount int  `json:"datasourceCount"`
+		}
+		if code := jsonRequest(t, admin, "POST", fmt.Sprintf("%s/api/grafana/connections/%d/test", server.URL, cid), map[string]any{}, &testRes); code != 200 || !testRes.OK || testRes.DatasourceCount != 2 {
+			t.Fatalf("测试连接 %d 失败：%d %+v", cid, code, testRes)
+		}
+	}
+	// 管理员编辑 Basic 连接留空密码应保持原密码可用
+	if code := jsonRequest(t, admin, "PUT", fmt.Sprintf("%s/api/grafana/connections/%d", server.URL, basicConn.ID), map[string]any{
+		"name": "Basic Grafana Updated", "baseUrl": grafana.URL, "authType": "basic", "username": "ops", "password": "",
+	}, &basicConn); code != 200 {
+		t.Fatalf("更新 Basic 连接失败：%d", code)
+	}
+	if code := jsonRequest(t, admin, "POST", fmt.Sprintf("%s/api/grafana/connections/%d/test", server.URL, basicConn.ID), map[string]any{}, nil); code != 200 {
+		t.Fatalf("留空密码更新后测试连接失败：%d", code)
+	}
+
+	// 普通成员读取连接列表不含 Basic 用户名或凭据，且可拉取数据源列表（过滤敏感字段）
+	var memberConns []GrafanaConnection
+	if code := jsonRequest(t, member, "GET", server.URL+"/api/grafana/connections", nil, &memberConns); code != 200 || len(memberConns) != 3 {
+		t.Fatalf("成员获取连接列表失败：%d %+v", code, memberConns)
+	}
+	for _, c := range memberConns {
+		if c.Username != "" {
+			t.Fatalf("普通成员不应看到 Basic 用户名：%+v", c)
+		}
+	}
+	var dsList []GrafanaDatasource
+	if code := jsonRequest(t, member, "GET", fmt.Sprintf("%s/api/grafana/connections/%d/datasources", server.URL, bearerConn.ID), nil, &dsList); code != 200 || len(dsList) != 2 {
+		t.Fatalf("成员拉取数据源失败：%d %+v", code, dsList)
+	}
+
+	// 成员创建多条查询 Grafana 工具并调试、发布
+	def := Definition{
+		Kind:           "grafana",
+		Name:           "query_host_multi",
+		Description:    "多查询按主机 IP 查指标与日志",
+		TimeoutSeconds: 15,
+		Grafana: &GrafanaConfig{
+			ConnectionID: bearerConn.ID,
+			FromRequired: false,
+			DefaultFrom:  "now-1h",
+			ToRequired:   false,
+			DefaultTo:    "now",
+			Queries: []GrafanaQuery{
+				{RefID: "A", DatasourceUID: "prom-1", DatasourceType: "prometheus", DatasourceName: "Prometheus", Expr: `up{instance=~"{{host_ip}}.*"}`},
+				{RefID: "B", DatasourceUID: "vmlogs-1", DatasourceType: "victoriametrics-logs-datasource", DatasourceName: "VictoriaLogs", Expr: `host:"{{host_ip}}"`, MaxLines: 50},
+			},
+		},
+		Parameters: []Parameter{
+			{Name: "host_ip", Description: "主机 IP", In: "query", Type: "string", Required: true, NonEmpty: true},
+		},
+	}
+	var tool ToolRecord
+	if code := jsonRequest(t, member, "POST", server.URL+"/api/tools", def, &tool); code != 201 {
+		t.Fatalf("创建 Grafana 工具失败：%d", code)
+	}
+
+	// 被工具引用的连接不能删除
+	if code := jsonRequest(t, admin, "DELETE", fmt.Sprintf("%s/api/grafana/connections/%d", server.URL, bearerConn.ID), nil, nil); code != 409 {
+		t.Fatalf("删除被引用连接应返回 409，实际 %d", code)
+	}
+	// Grafana 工具不支持 OpenAPI 导出
+	if code := jsonRequest(t, member, "GET", fmt.Sprintf("%s/api/tools/%d/export?format=openapi", server.URL, tool.ID), nil, nil); code != 400 {
+		t.Fatalf("Grafana 工具导出 OpenAPI 应返回 400，实际 %d", code)
+	}
+
+	// 调试调用：不传 from/to 使用默认值，并检查 rawBody 存在
+	var callRes CallResult
+	if code := jsonRequest(t, member, "POST", fmt.Sprintf("%s/api/tools/%d/call", server.URL, tool.ID), map[string]any{
+		"arguments": map[string]any{"host_ip": "10.1.2.3"},
+		"raw":       true,
+	}, &callRes); code != 200 || callRes.StatusCode != 200 || callRes.RawBody == "" {
+		t.Fatalf("Grafana 调试调用失败：%d %+v", code, callRes)
+	}
+	if !strings.Contains(callRes.Body, `up{instance=~\"10.1.2.3.*\"}`) && !strings.Contains(callRes.Body, `10.1.2.3`) {
+		t.Fatalf("整理后的结果未包含替换后的表达式：%s", callRes.Body)
+	}
+	if !strings.Contains(callRes.Body, "now-1h..now") {
+		t.Fatalf("整理后的结果未使用默认时间：%s", callRes.Body)
+	}
+
+	// 发布并通过真实 MCP 客户端调用（覆盖 from/to）
+	if code := jsonRequest(t, member, "POST", fmt.Sprintf("%s/api/tools/%d/publish", server.URL, tool.ID), map[string]bool{"published": true}, nil); code != 200 {
+		t.Fatalf("发布 Grafana 工具失败：%d", code)
+	}
+	var tokenResp struct {
+		Token string `json:"token"`
+	}
+	if code := jsonRequest(t, member, "POST", server.URL+"/api/tokens", map[string]string{"name": "mcp-grafana"}, &tokenResp); code != 201 {
+		t.Fatalf("创建令牌失败：%d", code)
+	}
+	mcpClient := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1.0.0"}, nil)
+	session, err := mcpClient.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:   server.URL + "/mcp",
+		HTTPClient: &http.Client{Transport: bearerTransport{token: tokenResp.Token}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	list, err := session.ListTools(ctx, nil)
+	if err != nil || len(list.Tools) != 1 || list.Tools[0].Name != "query_host_multi" {
+		t.Fatalf("MCP tools/list 不符：%v %+v", err, list)
+	}
+	mcpRes, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "query_host_multi",
+		Arguments: map[string]any{
+			"host_ip": "10.9.9.9",
+			"from":    "now-15m",
+			"to":      "now",
+		},
+	})
+	if err != nil || mcpRes.IsError {
+		t.Fatalf("MCP 调用 Grafana 工具失败：%v %+v", err, mcpRes)
+	}
+	text := mcpRes.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "10.9.9.9") || !strings.Contains(text, "now-15m..now") {
+		t.Fatalf("MCP 返回内容不符：%s", text)
+	}
+}

@@ -1,6 +1,17 @@
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+
+const envConfig = Object.fromEntries(
+  readFileSync(resolve(import.meta.dirname, "../../.env"), "utf8")
+    .split("\n")
+    .filter((line) => line && !line.startsWith("#"))
+    .map((line) => {
+      const at = line.indexOf("=");
+      return [line.slice(0, at), line.slice(at + 1)];
+    }),
+);
 
 const screenshot = (name: string) =>
   resolve(import.meta.dirname, "../../docs/screenshots", name);
@@ -499,5 +510,82 @@ test("开启调用审批后由页面批准并执行 MCP 调用", async ({ page }
   await page.reload();
   await expect(page.getByRole("heading", { name: "审批", exact: true })).toBeVisible();
   await expect(page.getByText("已执行", { exact: true })).toBeVisible();
+  expect(consoleErrors).toEqual([]);
+});
+
+test("管理员配置 Grafana 连接并创建多条查询工具与调试发布", async ({ page }, testInfo) => {
+  const consoleErrors: string[] = [];
+  page.on("pageerror", (error) => consoleErrors.push(error.message));
+
+  await page.goto("/");
+  await page.getByLabel("用户名", { exact: true }).fill(envConfig.ADMIN_USERNAME || "admin");
+  await page.getByLabel("密码", { exact: true }).fill(envConfig.ADMIN_PASSWORD!);
+  await page.getByRole("button", { name: "登录工作台" }).click();
+  await expect(page.getByRole("heading", { name: "接口库" })).toBeVisible();
+
+  const connName = `测试 Grafana ${Date.now()}`;
+  await page.getByRole("button", { name: /Grafana 连接/ }).click();
+  await expect(page.getByRole("heading", { name: /Grafana 连接/ })).toBeVisible();
+  await page.getByRole("button", { name: /新建连接/ }).click();
+  await page.getByLabel("连接名称").fill(connName);
+  await page.getByLabel("Grafana 地址").fill("http://127.0.0.1:8099");
+  await page.getByRole("textbox", { name: /Token/ }).fill("glsa_e2e_token");
+  await page.getByRole("button", { name: "保存连接" }).click();
+  await expect(page.locator("table")).toContainText(connName);
+  const connRow = page.locator("tr", { hasText: connName });
+  await connRow.getByRole("button", { name: "测试连接" }).click();
+  await expect(page.locator(".toast")).toContainText("检测到 3 个数据源");
+  await page.screenshot({ path: testInfo.outputPath("grafana-connections-desktop.png"), fullPage: true });
+
+  await page.locator("nav").getByRole("button", { name: /接口库/ }).click();
+  await page.getByRole("button", { name: /新建 Grafana 查询/ }).click();
+  await expect(page.getByRole("heading", { name: "Grafana 查询定义" })).toBeVisible();
+
+  const toolName = `grafana_host_${Date.now()}`;
+  await page.getByLabel("工具名称").fill(toolName);
+  await page.getByLabel("用途描述").fill("按主机 IP 联合查询 Prometheus 指标和 VictoriaLogs 日志");
+  await page.getByLabel("Grafana 连接", { exact: true }).selectOption({ label: `${connName}（http://127.0.0.1:8099）` });
+  await expect(page.getByLabel("查询 1 数据源")).toContainText("Prometheus Main");
+
+  await page.getByLabel("查询 A 语句").fill('up{instance=~"{{host_ip}}.*"}');
+  await page.getByRole("button", { name: /添加查询/ }).click();
+  await page.getByLabel("查询 2 数据源").selectOption("vmlogs-main");
+  await page.getByLabel("查询 B 语句").fill('host:"{{host_ip}}" AND env:"{{env}}"');
+  await page.getByRole("button", { name: "从占位符生成参数" }).click();
+
+  await expect(page.getByLabel("参数 1 名称")).toHaveValue("host_ip");
+  await expect(page.getByLabel("参数 2 名称")).toHaveValue("env");
+  await page.getByLabel("参数 2 映射方式").selectOption("true");
+  await page.getByLabel("参数 2 固定值").fill("prod");
+
+  await expect(page.locator(".schema-preview")).toContainText('"from"');
+  await expect(page.locator(".schema-preview")).toContainText('"now-1h"');
+  await expect(page.locator(".schema-preview")).toContainText('"host_ip"');
+  await expect(page.locator(".schema-preview")).not.toContainText('"env"');
+  await expect(page.getByRole("button", { name: "OpenAPI", exact: true })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "保存草稿" }).click();
+  await expect(page.getByRole("button", { name: "发送请求" })).toBeEnabled();
+  await page.getByLabel("调试值 host_ip").fill("10.20.30.40");
+  await page.getByRole("button", { name: "发送请求" }).click();
+  await expect(page.getByText("HTTP 200", { exact: true })).toBeVisible();
+  await expect(page.locator(".call-result pre").first()).toContainText('10.20.30.40');
+  await expect(page.locator(".call-result pre").first()).toContainText('now-1h..now');
+  await expect(page.locator(".call-result pre").first()).toContainText('prod');
+  await expect(page.getByText("Grafana 原始响应")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("grafana-editor-desktop.png"), fullPage: true });
+
+  await page.setViewportSize({ width: 393, height: 852 });
+  await page.screenshot({ path: testInfo.outputPath("grafana-editor-mobile.png"), fullPage: true });
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+  ).toBe(true);
+  await page.setViewportSize({ width: 1440, height: 1060 });
+
+  await page.getByRole("button", { name: "发布工具", exact: true }).click();
+  await expect(page.getByRole("button", { name: "停用工具" })).toBeVisible();
+  await page.getByRole("button", { name: "返回接口库" }).click();
+  await expect(page.locator(".tool-table")).toContainText(toolName);
+  await expect(page.locator(".tool-table")).toContainText("GRAFANA");
   expect(consoleErrors).toEqual([]);
 });

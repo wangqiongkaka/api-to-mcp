@@ -87,7 +87,7 @@ func definitionHash(d Definition) []byte {
 
 // submitApproval 校验并冻结 MCP 调用参数，生成待审批单，不访问上游。
 func (a *App) submitApproval(ctx context.Context, user User, tool ToolRecord, args map[string]any) *mcp.CallToolResult {
-	if _, err := a.prepare(tool.Definition, args); err != nil {
+	if _, _, _, err := a.prepare(ctx, tool.Definition, args); err != nil {
 		return toolError(err.Error())
 	}
 	var approverID *int64
@@ -235,12 +235,12 @@ func (a *App) approvalDetail(ctx context.Context, id int64, u User) (Approval, e
 	if item.ToolID != nil {
 		// 方法和用途描述对能看到审批单的人公开；最终请求只给接口维护者。
 		if tool, err := a.getTool(ctx, *item.ToolID, User{Role: "admin"}, false); err == nil {
-			item.Method, item.Purpose = tool.Method, tool.Description
+			item.Method, item.Purpose = tool.effectiveMethod(), tool.Description
 		}
 		if tool, err := a.getTool(ctx, *item.ToolID, u, false); err == nil && tool.manageableBy(u) {
 			var values map[string]any
 			if json.Unmarshal(item.Arguments, &values) == nil {
-				if request, err := tool.BuildRequest(values); err == nil {
+				if request, _, _, err := a.prepare(ctx, tool.Definition, values); err == nil {
 					preview := &requestPreview{Method: request.Method, URL: request.URL.String()}
 					if request.Body != nil {
 						var body bytes.Buffer
@@ -362,7 +362,7 @@ func (a *App) runApproval(ctx context.Context, toolID *int64, requesterID int64,
 	if err != nil {
 		return approvalOutcome{Error: "审批参数无法读取，未执行"}
 	}
-	if _, err := a.prepare(tool.Definition, args); err != nil {
+	if _, _, _, err := a.prepare(ctx, tool.Definition, args); err != nil {
 		return approvalOutcome{Error: err.Error() + "，未执行"}
 	}
 	result, err := a.execute(ctx, tool.Definition, args)

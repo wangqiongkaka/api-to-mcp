@@ -704,6 +704,90 @@ tbody tr:last-child td {
   color: #9f651f;
   background: #fff5e6;
 }
+.method.grafana {
+  color: #9a4714;
+  background: #fff3eb;
+}
+.kind-switch {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 7px;
+  background: #f1f4fa;
+  border: 1px solid #e2e7ef;
+}
+.kind-switch button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 550;
+  padding: 5px 11px;
+  border-radius: 5px;
+}
+.kind-switch button.selected {
+  background: #fff;
+  color: var(--blue);
+  box-shadow: 0 1px 2px #202d4512;
+}
+.grafana-conn-form {
+  margin-bottom: 22px;
+}
+.grafana-conn-grid,
+.grafana-time-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+}
+.grafana-connection-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+.grafana-time-item {
+  display: grid;
+  gap: 6px;
+}
+.form-content .compact-check {
+  font-size: 12px;
+  font-weight: 500;
+  gap: 6px;
+}
+.grafana-query-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #fafbfd;
+}
+.grafana-query-head {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+.ref-id-field {
+  width: 96px;
+  flex-shrink: 0;
+}
+.grafana-query-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+.grafana-raw-details {
+  margin-top: 12px;
+}
+@media (max-width: 760px) {
+  .grafana-conn-grid,
+  .grafana-time-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .grafana-connection-row,
+  .grafana-query-head {
+    flex-wrap: wrap;
+  }
+}
 .badge {
   display: inline-flex;
   gap: 6px;
@@ -1543,8 +1627,12 @@ tbody tr:last-child td {
     grid-column: 1 / -1;
     display: flex;
     gap: 8px;
+    overflow-x: auto;
+    max-width: 100%;
   }
   nav button {
+    flex-shrink: 0;
+    white-space: nowrap;
     padding: 8px 9px 12px;
     border-radius: 6px 6px 0 0;
     gap: 6px;

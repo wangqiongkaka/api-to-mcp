@@ -52,6 +52,12 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/approvals", a.requireUser(a.approvals))
 	mux.HandleFunc("GET /api/approvals/{id}", a.requireUser(a.approval))
 	mux.HandleFunc("POST /api/approvals/{id}/decision", a.requireUser(a.decide))
+	mux.HandleFunc("GET /api/grafana/connections", a.requireUser(a.grafanaConnections))
+	mux.HandleFunc("POST /api/grafana/connections", a.requireUser(a.grafanaConnections))
+	mux.HandleFunc("PUT /api/grafana/connections/{id}", a.requireUser(a.grafanaConnection))
+	mux.HandleFunc("DELETE /api/grafana/connections/{id}", a.requireUser(a.grafanaConnection))
+	mux.HandleFunc("POST /api/grafana/connections/{id}/test", a.requireUser(a.testGrafanaConnection))
+	mux.HandleFunc("GET /api/grafana/connections/{id}/datasources", a.requireUser(a.grafanaDatasources))
 	mux.HandleFunc("GET /api/tokens", a.requireUser(a.tokens))
 	mux.HandleFunc("POST /api/tokens", a.requireUser(a.tokens))
 	mux.HandleFunc("DELETE /api/tokens/{id}", a.requireUser(a.tokens))
@@ -89,7 +95,15 @@ func (a *App) tools(w http.ResponseWriter, r *http.Request) {
 			if t.manageableBy(u) {
 				continue
 			}
-			visible := Definition{Name: t.mcpName(u.ID), Description: t.Description, Method: t.Method, WholeBody: t.WholeBody, Parameters: []Parameter{}, Approval: t.Approval}
+			visible := Definition{Kind: t.Kind, Name: t.mcpName(u.ID), Description: t.Description, Method: t.effectiveMethod(), WholeBody: t.WholeBody, Parameters: []Parameter{}, Approval: t.Approval}
+			if t.isGrafana() && t.Grafana != nil {
+				visible.Grafana = &GrafanaConfig{
+					FromRequired: t.Grafana.FromRequired,
+					DefaultFrom:  t.Grafana.DefaultFrom,
+					ToRequired:   t.Grafana.ToRequired,
+					DefaultTo:    t.Grafana.DefaultTo,
+				}
+			}
 			for _, p := range t.Parameters {
 				if !p.Fixed {
 					p.Value = ""
@@ -105,8 +119,12 @@ func (a *App) tools(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &d) {
 		return
 	}
-	d.Approval.normalize()
+	d.normalize()
 	if err := d.Validate(); err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	if err := a.checkGrafanaConnectionExists(r.Context(), d); err != nil {
 		fail(w, 400, err.Error())
 		return
 	}
@@ -176,8 +194,12 @@ func (a *App) tool(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &d) {
 		return
 	}
-	d.Approval.normalize()
+	d.normalize()
 	if err := d.Validate(); err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	if err := a.checkGrafanaConnectionExists(r.Context(), d); err != nil {
 		fail(w, 400, err.Error())
 		return
 	}
@@ -260,10 +282,23 @@ func (a *App) publish(w http.ResponseWriter, r *http.Request) {
 			fail(w, 400, err.Error())
 			return
 		}
-		u, _ := url.Parse(record.URL)
-		if !a.allowed[u.Scheme+"://"+strings.ToLower(u.Host)] {
-			fail(w, 400, "上游地址尚未获准访问，请联系管理员配置 UPSTREAM_ORIGINS")
-			return
+		if record.isGrafana() {
+			conn, err := a.getGrafanaConnection(r.Context(), record.Grafana.ConnectionID)
+			if err != nil {
+				fail(w, 400, "所选 Grafana 连接不存在或已失效，请重新配置")
+				return
+			}
+			_, origin, err := normalizeGrafanaBaseURL(conn.BaseURL)
+			if err != nil || !a.allowed[origin] {
+				fail(w, 400, "Grafana 地址尚未获准访问，请联系管理员配置 UPSTREAM_ORIGINS")
+				return
+			}
+		} else {
+			u, _ := url.Parse(record.URL)
+			if !a.allowed[u.Scheme+"://"+strings.ToLower(u.Host)] {
+				fail(w, 400, "上游地址尚未获准访问，请联系管理员配置 UPSTREAM_ORIGINS")
+				return
+			}
 		}
 	}
 	if _, err := a.db.Exec(r.Context(), "UPDATE tools SET published=$1,updated_at=now() WHERE id=$2", input.Published, record.ID); err != nil {
@@ -294,10 +329,11 @@ func (a *App) call(w http.ResponseWriter, r *http.Request) {
 		fail(w, 403, "该接口需审批后执行，请通过 MCP 调用提交审批")
 		return
 	}
-	if input.Raw && record.manageableBy(currentUser(r)) {
+	includeRaw := input.Raw && record.manageableBy(currentUser(r))
+	if includeRaw {
 		record.OutputFields = nil
 	}
-	result, err := a.execute(r.Context(), record.Definition, args)
+	result, err := a.executeWithRaw(r.Context(), record.Definition, args, includeRaw)
 	if err != nil {
 		fail(w, 400, err.Error())
 		return
@@ -333,6 +369,10 @@ func outputPreview(w http.ResponseWriter, r *http.Request) {
 func (a *App) export(w http.ResponseWriter, r *http.Request) {
 	record, ok := a.record(w, r, false)
 	if !ok {
+		return
+	}
+	if record.isGrafana() {
+		fail(w, 400, "Grafana 查询工具不支持导出 OpenAPI")
 		return
 	}
 	if r.URL.Query().Get("format") != "openapi" {

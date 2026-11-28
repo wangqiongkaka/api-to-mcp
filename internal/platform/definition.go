@@ -27,16 +27,58 @@ type Parameter struct {
 }
 
 type Definition struct {
-	Name           string        `json:"name"`
-	Description    string        `json:"description"`
-	URL            string        `json:"url"`
-	Method         string        `json:"method"`
-	TimeoutSeconds int           `json:"timeoutSeconds"`
-	WholeBody      bool          `json:"wholeBody,omitempty"`
-	BodyTemplate   string        `json:"bodyTemplate,omitempty"`
-	Parameters     []Parameter   `json:"parameters"`
-	OutputFields   []OutputField `json:"outputFields,omitempty"`
-	Approval       *ApprovalRule `json:"approval,omitempty"`
+	Kind           string         `json:"kind,omitempty"`
+	Name           string         `json:"name"`
+	Description    string         `json:"description"`
+	URL            string         `json:"url,omitempty"`
+	Method         string         `json:"method,omitempty"`
+	TimeoutSeconds int            `json:"timeoutSeconds"`
+	WholeBody      bool           `json:"wholeBody,omitempty"`
+	BodyTemplate   string         `json:"bodyTemplate,omitempty"`
+	Grafana        *GrafanaConfig `json:"grafana,omitempty"`
+	Parameters     []Parameter    `json:"parameters"`
+	OutputFields   []OutputField  `json:"outputFields,omitempty"`
+	Approval       *ApprovalRule  `json:"approval,omitempty"`
+}
+
+func (d *Definition) normalize() {
+	d.Approval.normalize()
+	if d.isGrafana() {
+		d.URL = ""
+		d.Method = ""
+		d.WholeBody = false
+		d.BodyTemplate = ""
+		if d.Grafana != nil {
+			d.Grafana.DefaultFrom = strings.TrimSpace(d.Grafana.DefaultFrom)
+			d.Grafana.DefaultTo = strings.TrimSpace(d.Grafana.DefaultTo)
+			for i := range d.Grafana.Queries {
+				q := &d.Grafana.Queries[i]
+				q.RefID = strings.TrimSpace(q.RefID)
+				q.DatasourceUID = strings.TrimSpace(q.DatasourceUID)
+				q.DatasourceType = strings.TrimSpace(q.DatasourceType)
+				q.DatasourceName = strings.TrimSpace(q.DatasourceName)
+				q.Interval = strings.TrimSpace(q.Interval)
+				q.TimeField = strings.TrimSpace(q.TimeField)
+			}
+		}
+		for i := range d.Parameters {
+			d.Parameters[i].In = "query"
+		}
+		return
+	}
+	d.Kind = ""
+	d.Grafana = nil
+}
+
+func (d Definition) isGrafana() bool {
+	return d.Kind == "grafana"
+}
+
+func (d Definition) effectiveMethod() string {
+	if d.isGrafana() {
+		return "GRAFANA"
+	}
+	return d.Method
 }
 
 var toolName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]{0,63}$`)
@@ -44,11 +86,20 @@ var parameterName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,127}$`)
 var placeholder = regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_.-]*)\}`)
 
 func (d Definition) Validate() error {
+	if d.Kind != "" && d.Kind != "http" && d.Kind != "grafana" {
+		return fmt.Errorf("不支持的工具类型")
+	}
 	if !toolName.MatchString(d.Name) {
 		return fmt.Errorf("工具名称须以字母或下划线开头，只能包含字母、数字、下划线和连字符，最长 64 字符")
 	}
 	if strings.TrimSpace(d.Description) == "" || len(d.Description) > 4000 {
 		return fmt.Errorf("请填写工具用途，最长 4000 字节")
+	}
+	if d.TimeoutSeconds < 1 || d.TimeoutSeconds > 60 || len(d.Parameters) > 100 {
+		return fmt.Errorf("超时须为 1–60 秒，最多配置 100 个参数")
+	}
+	if d.isGrafana() {
+		return d.validateGrafana()
 	}
 	u, err := url.Parse(d.URL)
 	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.Fragment != "" || len(d.URL) > 4096 {
@@ -61,9 +112,6 @@ func (d Definition) Validate() error {
 	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS":
 	default:
 		return fmt.Errorf("不支持的请求方法")
-	}
-	if d.TimeoutSeconds < 1 || d.TimeoutSeconds > 60 || len(d.Parameters) > 100 {
-		return fmt.Errorf("超时须为 1–60 秒，最多配置 100 个参数")
 	}
 	seen, paths := map[string]bool{}, map[string]bool{}
 	templateParams := map[string]any{}
@@ -230,6 +278,9 @@ func (p Parameter) schema() map[string]any {
 }
 
 func (d Definition) InputSchema() map[string]any {
+	if d.isGrafana() {
+		return d.grafanaInputSchema()
+	}
 	properties := map[string]any{}
 	required := []string{}
 	for _, p := range d.Parameters {

@@ -1,8 +1,28 @@
 <script setup lang="ts">
 import HelpHint from "./HelpHint.vue";
+import GrafanaConnections from "./GrafanaConnections.vue";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import type { AccessToken, Approval, ApprovalRule, CallResult, Definition, Parameter, Tool, User } from "./types";
-import { definitionOf, emptyDefinition, podExample } from "./types";
+import type {
+  AccessToken,
+  Approval,
+  ApprovalRule,
+  CallResult,
+  Definition,
+  GrafanaConnection,
+  GrafanaDatasource,
+  GrafanaQuery,
+  Parameter,
+  Tool,
+  User,
+} from "./types";
+import {
+  definitionOf,
+  emptyDefinition,
+  emptyGrafanaDefinition,
+  emptyGrafanaQuery,
+  grafanaDatasourceFamily,
+  podExample,
+} from "./types";
 import { responsePaths } from "./outputPaths";
 
 const user = ref<User | null>(null);
@@ -14,8 +34,13 @@ const authBusy = ref(false);
 const error = ref("");
 const toast = ref("");
 let toastTimer: ReturnType<typeof setTimeout>;
-const view = ref<"tools" | "approvals" | "tokens" | "users">("tools");
+const view = ref<"tools" | "approvals" | "tokens" | "grafana" | "users">("tools");
 const tools = ref<Tool[]>([]);
+const grafanaConnections = ref<GrafanaConnection[]>([]);
+const grafanaDatasources = ref<GrafanaDatasource[]>([]);
+const loadingDatasources = ref(false);
+const datasourceError = ref("");
+const grafanaExtractionError = ref("");
 const tokens = ref<AccessToken[]>([]);
 const users = ref<User[]>([]);
 const approvals = ref<Approval[]>([]);
@@ -62,6 +87,28 @@ const parameterTypes: Record<Parameter["type"], string> = {
   object: "对象",
   array: "数组",
 };
+const grafanaParameterTypes: Record<"string" | "boolean" | "integer" | "number", string> = {
+  string: "字符串",
+  boolean: "布尔值",
+  integer: "整数",
+  number: "数值",
+};
+const isGrafanaEditor = computed(() => editor.value?.kind === "grafana");
+const grafanaPlaceholderNames = computed(() => {
+  if (!isGrafanaEditor.value || !editor.value?.grafana) return [];
+  const found: string[] = [];
+  const seen = new Set<string>();
+  for (const q of editor.value.grafana.queries) {
+    for (const match of q.expr.matchAll(/\{\{([A-Za-z_][A-Za-z0-9_.-]{0,127})\}\}/g)) {
+      const name = match[1];
+      if (!seen.has(name)) {
+        seen.add(name);
+        found.push(name);
+      }
+    }
+  }
+  return found;
+});
 const bodyParameters = computed(() =>
   editor.value?.parameters.filter((p) => p.in === "body") ?? [],
 );
@@ -104,7 +151,7 @@ const visibleTools = computed(() =>
     (t) =>
       (filter.value === "all" ||
         (filter.value === "published" ? t.published : !t.published)) &&
-      `${t.name} ${t.description} ${t.url} ${t.ownerName}`
+      `${t.name} ${t.description} ${t.url} ${t.ownerName} ${t.kind === "grafana" ? "grafana " + grafanaSummary(t) : ""}`
         .toLowerCase()
         .includes(search.value.toLowerCase()),
   ),
@@ -116,6 +163,27 @@ const schema = computed(() => {
   const properties: Record<string, unknown> = Object.create(null);
   const required: string[] = [];
   const filters: string[] = [];
+  if (editor.value?.kind === "grafana" && editor.value.grafana) {
+    const g = editor.value.grafana;
+    const defFrom = (g.defaultFrom ?? "").trim();
+    const defTo = (g.defaultTo ?? "").trim();
+    properties.from = {
+      type: "string",
+      description:
+        "查询开始时间，支持相对时间（如 now-1h）、ISO8601 或 Unix 毫秒时间戳" +
+        (!g.fromRequired && defFrom ? `。不传时默认：${defFrom}` : ""),
+      ...(g.fromRequired ? { pattern: "\\S" } : defFrom ? { default: defFrom } : {}),
+    };
+    if (g.fromRequired) required.push("from");
+    properties.to = {
+      type: "string",
+      description:
+        "查询结束时间，支持相对时间（如 now）、ISO8601 或 Unix 毫秒时间戳" +
+        (!g.toRequired && defTo ? `。不传时默认：${defTo}` : ""),
+      ...(g.toRequired ? { pattern: "\\S" } : defTo ? { default: defTo } : {}),
+    };
+    if (g.toRequired) required.push("to");
+  }
   for (const p of editor.value?.parameters ?? []) {
     if (p.fixed || !p.name) continue;
     properties[p.name] = {
@@ -182,6 +250,49 @@ function isShared(tool: Tool) {
 async function refreshTools() {
   tools.value = await api<Tool[]>("/tools");
 }
+async function refreshGrafanaConnections() {
+  grafanaConnections.value = await api<GrafanaConnection[]>("/grafana/connections");
+}
+async function loadDatasources(connectionId: number, autoSelectDefault = false) {
+  grafanaDatasources.value = [];
+  datasourceError.value = "";
+  if (!connectionId || connectionId < 1) return;
+  loadingDatasources.value = true;
+  try {
+    const list = await api<GrafanaDatasource[]>(`/grafana/connections/${connectionId}/datasources`);
+    if (editor.value?.grafana?.connectionId !== connectionId) return;
+    grafanaDatasources.value = list;
+    if (autoSelectDefault && list.length && editor.value?.grafana) {
+      const def = list.find((d) => d.isDefault) ?? list[0];
+      for (const q of editor.value.grafana.queries) {
+        if (!q.datasourceUid) {
+          q.datasourceUid = def.uid;
+          q.datasourceType = def.type;
+          q.datasourceName = def.name;
+        }
+      }
+    }
+  } catch (e) {
+    if (editor.value?.grafana?.connectionId === connectionId) {
+      datasourceError.value = message(e);
+    }
+  } finally {
+    loadingDatasources.value = false;
+  }
+}
+function grafanaSummary(t: Tool) {
+  if (t.kind !== "grafana") return t.url;
+  const g = t.grafana;
+  if (!g || !g.connectionId) return "Grafana 查询";
+  const conn = grafanaConnections.value.find((c) => c.id === g.connectionId);
+  const dsNames = Array.from(new Set((g.queries ?? []).map((q) => q.datasourceName || q.datasourceType).filter(Boolean)));
+  const count = g.queries?.length ?? 0;
+  const parts: string[] = [];
+  if (conn) parts.push(conn.name);
+  if (count) parts.push(`${count} 条查询`);
+  if (dsNames.length) parts.push(dsNames.join("、"));
+  return parts.join(" · ") || "Grafana 查询";
+}
 async function loadApprovals() {
   approvals.value = await api<Approval[]>("/approvals");
   if (openApproval.value && !approvals.value.some((item) => item.id === openApproval.value?.id))
@@ -191,6 +302,7 @@ async function afterLogin() {
   if (window.location.hash === "#approvals") view.value = "approvals";
   await Promise.all([
     refreshTools(),
+    refreshGrafanaConnections(),
     loadApprovals(),
     api<{ allowedOrigins: string[] }>("/settings").then((s) => {
       allowedOrigins.value = s.allowedOrigins;
@@ -252,7 +364,8 @@ async function navigate(next: typeof view.value) {
   error.value = "";
   createdToken.value = "";
   try {
-    if (next === "tools") await refreshTools();
+    if (next === "tools") await Promise.all([refreshTools(), refreshGrafanaConnections()]);
+    if (next === "grafana") await refreshGrafanaConnections();
     if (next === "approvals") await loadApprovals();
     if (next === "tokens") tokens.value = await api<AccessToken[]>("/tokens");
     if (next === "users") users.value = await api<User[]>("/users");
@@ -267,6 +380,9 @@ function openEditor(definition: Definition, id: number | null = null) {
   selectedId.value = id;
   baseline.value = JSON.stringify(editor.value);
   bodyExtractionError.value = "";
+  grafanaExtractionError.value = "";
+  grafanaDatasources.value = [];
+  datasourceError.value = "";
   preview.value = "schema";
   exported.value = "";
   error.value = "";
@@ -276,10 +392,197 @@ function openEditor(definition: Definition, id: number | null = null) {
   outputResult.value = null;
   trialRows.value = [];
   syncTrialRows();
+  if (editor.value.kind === "grafana" && editor.value.grafana?.connectionId && !sharedTool.value) {
+    void loadDatasources(editor.value.grafana.connectionId, false);
+  }
 }
 
 function newTool(example = false) {
   openEditor(example ? podExample() : emptyDefinition());
+}
+
+function newGrafanaTool() {
+  const defaultConn = grafanaConnections.value.length === 1 ? grafanaConnections.value[0].id : 0;
+  openEditor(emptyGrafanaDefinition(defaultConn));
+}
+
+function switchEditorKind(kind: "http" | "grafana") {
+  if (!editor.value || selectedId.value !== null) return;
+  const currentlyGrafana = editor.value.kind === "grafana";
+  if ((kind === "grafana") === currentlyGrafana) return;
+  const name = editor.value.name;
+  const description = editor.value.description;
+  const timeoutSeconds = editor.value.timeoutSeconds;
+  const next =
+    kind === "grafana"
+      ? emptyGrafanaDefinition(grafanaConnections.value.length === 1 ? grafanaConnections.value[0].id : 0)
+      : emptyDefinition();
+  next.name = name;
+  next.description = description;
+  next.timeoutSeconds = timeoutSeconds;
+  editor.value = next;
+  preview.value = "schema";
+  grafanaDatasources.value = [];
+  datasourceError.value = "";
+  grafanaExtractionError.value = "";
+  bodyExtractionError.value = "";
+  if (kind === "grafana" && next.grafana?.connectionId) {
+    void loadDatasources(next.grafana.connectionId, false);
+  }
+}
+
+function onGrafanaConnectionChange() {
+  const g = editor.value?.grafana;
+  if (!g) return;
+  for (const q of g.queries) {
+    q.datasourceUid = "";
+    q.datasourceType = "";
+    q.datasourceName = "";
+    q.queryMode = "";
+  }
+  void loadDatasources(g.connectionId, true);
+}
+
+function nextGrafanaRefId(queries: GrafanaQuery[]) {
+  const used = new Set(queries.map((q) => q.refId.toUpperCase()));
+  for (let code = 65; code <= 90; code++) {
+    const candidate = String.fromCharCode(code);
+    if (!used.has(candidate)) return candidate;
+  }
+  for (let n = 1; n <= 99; n++) {
+    const candidate = `Q${n}`;
+    if (!used.has(candidate)) return candidate;
+  }
+  return "Q";
+}
+
+function addGrafanaQuery() {
+  const g = editor.value?.grafana;
+  if (!g || g.queries.length >= 20) return;
+  const previous = g.queries[g.queries.length - 1];
+  g.queries.push(emptyGrafanaQuery(nextGrafanaRefId(g.queries), previous));
+}
+
+function removeGrafanaQuery(index: number) {
+  const g = editor.value?.grafana;
+  if (!g || g.queries.length <= 1) return;
+  g.queries.splice(index, 1);
+}
+
+function selectQueryDatasource(q: GrafanaQuery, uid: string) {
+  const ds = grafanaDatasources.value.find((item) => item.uid === uid);
+  q.datasourceUid = uid;
+  if (ds) {
+    q.datasourceType = ds.type;
+    q.datasourceName = ds.name;
+    q.queryMode = "";
+  } else {
+    q.datasourceType = "";
+    q.datasourceName = "";
+  }
+}
+
+function queryExprPlaceholder(dsType: string) {
+  switch (grafanaDatasourceFamily(dsType)) {
+    case "prometheus":
+      return '例如：up{instance=~"{{host_ip}}.*"}';
+    case "loki":
+      return '例如：{host="{{host_ip}}"} |= "error"';
+    case "victorialogs":
+      return '例如：host:"{{host_ip}}" AND _msg:error';
+    case "clickhouse":
+    case "sql":
+      return "例如：SELECT * FROM events WHERE host_ip = '{{host_ip}}' LIMIT 100";
+    case "elasticsearch":
+      return '例如：host.ip:"{{host_ip}}" AND level:error';
+    default:
+      return '输入查询语句，使用 {{host_ip}} 声明变量';
+  }
+}
+
+function queryModeOptions(dsType: string): Array<{ value: string; label: string }> {
+  switch (grafanaDatasourceFamily(dsType)) {
+    case "prometheus":
+      return [
+        { value: "", label: "区间查询（range，默认）" },
+        { value: "instant", label: "即时查询（instant）" },
+      ];
+    case "loki":
+      return [
+        { value: "", label: "区间查询（range，默认）" },
+        { value: "instant", label: "即时查询（instant）" },
+      ];
+    case "victorialogs":
+      return [
+        { value: "", label: "日志列表（instant，默认）" },
+        { value: "stats", label: "聚合统计（stats）" },
+        { value: "statsRange", label: "区间统计（statsRange）" },
+        { value: "hits", label: "命中分布（hits）" },
+      ];
+    case "clickhouse":
+    case "sql":
+      return [
+        { value: "", label: "表格（table，默认）" },
+        { value: "time_series", label: "时序（time_series）" },
+      ];
+    case "elasticsearch":
+      return [
+        { value: "", label: "原始文档（raw_data，默认）" },
+        { value: "logs", label: "日志（logs）" },
+      ];
+    default:
+      return [];
+  }
+}
+
+function extractGrafanaParameters() {
+  const definition = editor.value;
+  if (!definition?.grafana || published.value) return;
+  grafanaExtractionError.value = "";
+  try {
+    const existing = new Map(definition.parameters.map((p) => [p.name.toLowerCase(), p]));
+    const added: Parameter[] = [];
+    for (const q of definition.grafana.queries) {
+      if (/\{\{\s*\}\}/.test(q.expr)) {
+        throw new Error(`查询 ${q.refId || ""} 包含空占位符 {{}}`);
+      }
+      for (const match of q.expr.matchAll(/\{\{([A-Za-z_][A-Za-z0-9_.-]{0,127})\}\}/g)) {
+        const name = match[1];
+        const lower = name.toLowerCase();
+        if (lower === "from" || lower === "to") continue;
+        const found = existing.get(lower);
+        if (found) {
+          if (found.name !== name) {
+            throw new Error(`占位符与已有参数大小写不一致：${name}`);
+          }
+          continue;
+        }
+        const mapping: Parameter = {
+          name,
+          description: "",
+          in: "query",
+          type: "string",
+          required: true,
+          fixed: false,
+          value: "",
+        };
+        added.push(mapping);
+        existing.set(lower, mapping);
+      }
+    }
+    if (definition.parameters.length + added.length > 100) {
+      throw new Error("最多配置 100 个参数，请减少占位符或移除不需要的参数");
+    }
+    if (!added.length) {
+      notify("查询语句中没有可新增的占位符（from / to 为内置时间参数）");
+      return;
+    }
+    definition.parameters.push(...added);
+    preview.value = "schema";
+    notify(`已生成 ${added.length} 个查询变量参数，请在参数表确认说明与类型`);
+  } catch (e) {
+    grafanaExtractionError.value = message(e);
+  }
 }
 
 function setApproval(enabled: boolean, approver: ApprovalRule["approver"] = "self") {
@@ -455,10 +758,53 @@ function extractBodyParameters() {
   }
 }
 
-const trialFields = computed(() => (editor.value?.parameters ?? [])
-  .filter(p => !p.fixed && p.name.trim())
-  .map(parameter => ({ parameter, name: parameter.name, type: parameter.type })));
-const trialRows = ref<Array<{ parameter: Parameter; name: string; type: Parameter["type"]; value: string }>>([]);
+const trialFields = computed(() => {
+  const fields: Array<{ parameter: Parameter; name: string; type: Parameter["type"]; defaultHint?: string }> = [];
+  if (editor.value?.kind === "grafana" && editor.value.grafana) {
+    const g = editor.value.grafana;
+    fields.push(
+      {
+        parameter: {
+          name: "from",
+          description: "查询开始时间",
+          in: "query",
+          type: "string",
+          required: g.fromRequired,
+          nonEmpty: g.fromRequired,
+          fixed: false,
+          value: "",
+        },
+        name: "from",
+        type: "string",
+        defaultHint: !g.fromRequired && g.defaultFrom ? g.defaultFrom : undefined,
+      },
+      {
+        parameter: {
+          name: "to",
+          description: "查询结束时间",
+          in: "query",
+          type: "string",
+          required: g.toRequired,
+          nonEmpty: g.toRequired,
+          fixed: false,
+          value: "",
+        },
+        name: "to",
+        type: "string",
+        defaultHint: !g.toRequired && g.defaultTo ? g.defaultTo : undefined,
+      },
+    );
+  }
+  for (const parameter of editor.value?.parameters ?? []) {
+    if (!parameter.fixed && parameter.name.trim()) {
+      fields.push({ parameter, name: parameter.name, type: parameter.type });
+    }
+  }
+  return fields;
+});
+const trialRows = ref<
+  Array<{ parameter: Parameter; name: string; type: Parameter["type"]; value: string; defaultHint?: string }>
+>([]);
 
 function syncTrialRows() {
   const previous = trialRows.value;
@@ -885,6 +1231,17 @@ onUnmounted(() => {
           <span class="nav-icon" aria-hidden="true">⌁</span>连接与令牌</button
         ><button
           v-if="user.role === 'admin'"
+          :class="{ active: view === 'grafana' }"
+          @click="navigate('grafana')"
+        >
+          <span class="nav-icon" aria-hidden="true">◈</span>Grafana 连接<span
+            v-if="grafanaConnections.length"
+            class="nav-count"
+            aria-hidden="true"
+            >{{ grafanaConnections.length }}</span
+          ></button
+        ><button
+          v-if="user.role === 'admin'"
           :class="{ active: view === 'users' }"
           @click="navigate('users')"
         >
@@ -927,9 +1284,14 @@ onUnmounted(() => {
             </h1>
             <p>把现有 REST API，连接到你的 AI 工作流。</p>
           </div>
-          <button class="button primary" @click="newTool()">
-            <span aria-hidden="true">＋</span>新建接口
-          </button>
+          <div class="button-row">
+            <button class="button" @click="newGrafanaTool()">
+              <span aria-hidden="true">＋</span>新建 Grafana 查询
+            </button>
+            <button class="button primary" @click="newTool()">
+              <span aria-hidden="true">＋</span>新建接口
+            </button>
+          </div>
         </header>
         <div class="toolbar">
           <div class="filter-tabs" aria-label="接口状态筛选">
@@ -992,10 +1354,16 @@ onUnmounted(() => {
                   <p class="row-description">{{ t.description }}</p>
                 </td>
                 <td>
-                  <span :class="['method', t.method.toLowerCase()]">{{
-                    t.method
-                  }}</span
-                  ><span v-if="t.url" class="row-url" :title="t.url">{{ t.url }}</span>
+                  <template v-if="t.kind === 'grafana'">
+                    <span class="method grafana">GRAFANA</span
+                    ><span class="row-url" :title="grafanaSummary(t)">{{ grafanaSummary(t) }}</span>
+                  </template>
+                  <template v-else>
+                    <span :class="['method', t.method.toLowerCase()]">{{
+                      t.method
+                    }}</span
+                    ><span v-if="t.url" class="row-url" :title="t.url">{{ t.url }}</span>
+                  </template>
                 </td>
                 <td>
                   <span :class="['badge', t.published ? 'success' : 'neutral']"
@@ -1081,7 +1449,20 @@ onUnmounted(() => {
             <form v-if="!sharedTool" id="tool-form" class="panel" @submit.prevent="save">
               <fieldset :disabled="published || saving">
                 <div class="panel-heading">
-                  <h2>接口定义</h2>
+                  <h2>{{ isGrafanaEditor ? "Grafana 查询定义" : "接口定义" }}</h2>
+                  <div v-if="selectedId === null" class="kind-switch" role="group" aria-label="工具类型">
+                    <button
+                      type="button"
+                      :class="{ selected: !isGrafanaEditor }"
+                      @click="switchEditorKind('http')"
+                    >HTTP 接口</button>
+                    <button
+                      type="button"
+                      :class="{ selected: isGrafanaEditor }"
+                      @click="switchEditorKind('grafana')"
+                    >Grafana 查询</button>
+                  </div>
+                  <span v-else-if="isGrafanaEditor" class="method grafana">GRAFANA</span>
                 </div>
                 <div class="form-content">
                   <div class="form-grid">
@@ -1091,7 +1472,7 @@ onUnmounted(() => {
                         required
                         pattern="[A-Za-z_][A-Za-z0-9_-]{0,63}"
                         maxlength="64"
-                        placeholder="例如 getPodInstance" /></label
+                        :placeholder="isGrafanaEditor ? '例如 queryHostMetrics' : '例如 getPodInstance'" /></label
                     ><label
                       >请求超时（秒）<input
                         v-model.number="editor.timeoutSeconds"
@@ -1106,40 +1487,368 @@ onUnmounted(() => {
                       v-model="editor.description"
                       required
                       rows="2"
-                      placeholder="如按主机 IP 查询资产"
+                      :placeholder="isGrafanaEditor ? '如按主机 IP 查询 CPU 与错误日志' : '如按主机 IP 查询资产'"
                     /></label>
-                  <div class="url-field">
-                    <div class="url-heading">
-                      <div class="group-title">
-                        <label for="endpoint-url">接口地址</label>
-                        <HelpHint label="路径变量说明" text="接口地址中的路径变量使用 {id} 格式。" />
+                  <template v-if="!isGrafanaEditor">
+                    <div class="url-field">
+                      <div class="url-heading">
+                        <div class="group-title">
+                          <label for="endpoint-url">接口地址</label>
+                          <HelpHint label="路径变量说明" text="接口地址中的路径变量使用 {id} 格式。" />
+                        </div>
+                        <button type="button" class="text-button" @click="extractQuery">提取 URL 查询参数</button>
                       </div>
-                      <button type="button" class="text-button" @click="extractQuery">提取 URL 查询参数</button>
-                    </div>
-                    <div class="request-input">
-                      <select v-model="editor.method" aria-label="请求方法">
-                        <option
-                          v-for="method in [
-                            'GET',
-                            'POST',
-                            'PUT',
-                            'PATCH',
-                            'DELETE',
-                            'HEAD',
-                            'OPTIONS',
-                          ]"
-                          :key="method"
+                      <div class="request-input">
+                        <select v-model="editor.method" aria-label="请求方法">
+                          <option
+                            v-for="method in [
+                              'GET',
+                              'POST',
+                              'PUT',
+                              'PATCH',
+                              'DELETE',
+                              'HEAD',
+                              'OPTIONS',
+                            ]"
+                            :key="method"
+                          >
+                            {{ method }}
+                          </option></select
+                        ><input
+                          id="endpoint-url" v-model="editor.url"
+                          required
+                          type="url"
+                          placeholder="https://api.example.com/users/{id}"
+                          aria-label="接口地址"
+                        /></div></div>
+                  </template>
+                  <template v-else-if="editor.grafana">
+                    <div class="grafana-connection-row">
+                      <label class="grow">
+                        Grafana 连接
+                        <select
+                          v-model.number="editor.grafana.connectionId"
+                          required
+                          aria-label="Grafana 连接"
+                          @change="onGrafanaConnectionChange"
                         >
-                          {{ method }}
-                        </option></select
-                      ><input
-                        id="endpoint-url" v-model="editor.url"
-                        required
-                        type="url"
-                        placeholder="https://api.example.com/users/{id}"
-                        aria-label="接口地址"
-                      /></div></div>
+                          <option :value="0" disabled>请选择 Grafana 连接</option>
+                          <option v-for="c in grafanaConnections" :key="c.id" :value="c.id">
+                            {{ c.name }}（{{ c.baseUrl }}）
+                          </option>
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        class="button small"
+                        :disabled="!editor.grafana.connectionId || loadingDatasources"
+                        @click="loadDatasources(editor.grafana.connectionId, false)"
+                      >
+                        {{ loadingDatasources ? "拉取中…" : "刷新数据源" }}
+                      </button>
+                    </div>
+                    <p v-if="!grafanaConnections.length" class="field-help">
+                      尚未配置 Grafana 连接。
+                      <button
+                        v-if="user.role === 'admin'"
+                        type="button"
+                        class="text-button"
+                        @click="navigate('grafana')"
+                      >前往「Grafana 连接」添加</button>
+                      <span v-else>请联系管理员在工作台添加 Grafana 连接。</span>
+                    </p>
+                    <div v-if="datasourceError" class="alert error" role="alert">{{ datasourceError }}</div>
+                    <div class="grafana-time-grid">
+                      <div class="grafana-time-item">
+                        <div class="url-heading">
+                          <div class="group-title">
+                            <label for="grafana-default-from">开始时间（from）</label>
+                            <HelpHint label="时间范围说明" text="内置时间参数，支持相对时间（如 now-1h、now）、ISO8601 或 Unix 毫秒时间戳。查询语句中也可直接写 {{from}}、{{to}}。" />
+                          </div>
+                          <label class="check-label compact-check">
+                            <input v-model="editor.grafana.fromRequired" type="checkbox" />
+                            必填
+                          </label>
+                        </div>
+                        <input
+                          id="grafana-default-from"
+                          v-model.trim="editor.grafana.defaultFrom"
+                          :disabled="editor.grafana.fromRequired"
+                          :required="!editor.grafana.fromRequired"
+                          maxlength="128"
+                          :placeholder="editor.grafana.fromRequired ? '调用时由客户端必填' : '默认开始时间，如 now-1h'"
+                        />
+                      </div>
+                      <div class="grafana-time-item">
+                        <div class="url-heading">
+                          <label for="grafana-default-to">结束时间（to）</label>
+                          <label class="check-label compact-check">
+                            <input v-model="editor.grafana.toRequired" type="checkbox" />
+                            必填
+                          </label>
+                        </div>
+                        <input
+                          id="grafana-default-to"
+                          v-model.trim="editor.grafana.defaultTo"
+                          :disabled="editor.grafana.toRequired"
+                          :required="!editor.grafana.toRequired"
+                          maxlength="128"
+                          :placeholder="editor.grafana.toRequired ? '调用时由客户端必填' : '默认结束时间，如 now'"
+                        />
+                      </div>
+                    </div>
+                  </template>
                 </div>
+                <template v-if="isGrafanaEditor && editor.grafana">
+                  <section class="parameter-group" aria-label="Grafana 查询语句">
+                    <div class="parameter-heading">
+                      <div class="group-title">
+                        <h2>查询语句</h2>
+                        <HelpHint label="查询语句说明" text="支持添加多条查询（A、B、C...），每条可选不同数据源。在语句中使用 {{host_ip}} 等占位符声明变量，点击右侧按钮自动提取参数。" />
+                      </div>
+                      <div class="button-row">
+                        <button
+                          type="button"
+                          class="button small"
+                          @click="extractGrafanaParameters"
+                        >从占位符生成参数</button>
+                        <button
+                          type="button"
+                          class="button small"
+                          :disabled="editor.grafana.queries.length >= 20"
+                          @click="addGrafanaQuery"
+                        >＋ 添加查询</button>
+                      </div>
+                    </div>
+                    <div class="form-content">
+                      <div v-if="grafanaExtractionError" class="alert error" role="alert">{{ grafanaExtractionError }}</div>
+                      <div
+                        v-for="(q, qIndex) in editor.grafana.queries"
+                        :key="qIndex"
+                        class="grafana-query-card"
+                      >
+                        <div class="grafana-query-head">
+                          <label class="ref-id-field">
+                            查询标识
+                            <input
+                              v-model.trim="q.refId"
+                              required
+                              maxlength="32"
+                              pattern="[A-Za-z][A-Za-z0-9_-]{0,31}"
+                              :aria-label="`查询 ${qIndex + 1} 标识`"
+                              placeholder="A"
+                            />
+                          </label>
+                          <label class="grow">
+                            数据源
+                            <select
+                              :value="q.datasourceUid"
+                              required
+                              :aria-label="`查询 ${qIndex + 1} 数据源`"
+                              @change="selectQueryDatasource(q, ($event.target as HTMLSelectElement).value)"
+                            >
+                              <option value="" disabled>
+                                {{ loadingDatasources ? "正在拉取数据源…" : "请选择数据源" }}
+                              </option>
+                              <option
+                                v-if="q.datasourceUid && !grafanaDatasources.some((d) => d.uid === q.datasourceUid)"
+                                :value="q.datasourceUid"
+                              >
+                                {{ q.datasourceName || q.datasourceUid }}（{{ q.datasourceType }}）
+                              </option>
+                              <option v-for="ds in grafanaDatasources" :key="ds.uid" :value="ds.uid">
+                                {{ ds.name }}（{{ ds.type }}）{{ ds.isDefault ? " · 默认" : "" }}
+                              </option>
+                            </select>
+                          </label>
+                          <button
+                            v-if="editor.grafana.queries.length > 1"
+                            type="button"
+                            class="icon-button danger-text"
+                            :aria-label="`删除查询 ${q.refId || qIndex + 1}`"
+                            @click="removeGrafanaQuery(qIndex)"
+                          >×</button>
+                        </div>
+
+                        <div v-if="q.datasourceType" class="grafana-query-options">
+                          <label v-if="queryModeOptions(q.datasourceType).length">
+                            查询模式
+                            <select v-model="q.queryMode" :aria-label="`查询 ${q.refId || qIndex + 1} 模式`">
+                              <option
+                                v-for="opt in queryModeOptions(q.datasourceType)"
+                                :key="opt.value"
+                                :value="opt.value"
+                              >{{ opt.label }}</option>
+                            </select>
+                          </label>
+                          <label
+                            v-if="['prometheus', 'loki', 'victorialogs'].includes(grafanaDatasourceFamily(q.datasourceType))"
+                          >
+                            步长 / Interval（选填）
+                            <input
+                              v-model.trim="q.interval"
+                              maxlength="64"
+                              placeholder="如 1m、30s"
+                            />
+                          </label>
+                          <label v-if="grafanaDatasourceFamily(q.datasourceType) === 'prometheus'">
+                            最大点数（选填）
+                            <input
+                              v-model.number="q.maxDataPoints"
+                              type="number"
+                              min="0"
+                              max="100000"
+                              placeholder="默认由数据源决定"
+                            />
+                          </label>
+                          <label
+                            v-if="['loki', 'victorialogs', 'elasticsearch'].includes(grafanaDatasourceFamily(q.datasourceType))"
+                          >
+                            最大返回条数（选填）
+                            <input
+                              v-model.number="q.maxLines"
+                              type="number"
+                              min="0"
+                              max="10000"
+                              placeholder="默认 100"
+                            />
+                          </label>
+                          <label v-if="grafanaDatasourceFamily(q.datasourceType) === 'elasticsearch'">
+                            时间字段（选填）
+                            <input
+                              v-model.trim="q.timeField"
+                              maxlength="128"
+                              placeholder="如 @timestamp"
+                            />
+                          </label>
+                        </div>
+
+                        <label>
+                          查询语句
+                          <textarea
+                            v-model="q.expr"
+                            required
+                            rows="3"
+                            maxlength="32768"
+                            spellcheck="false"
+                            class="code-input"
+                            :aria-label="`查询 ${q.refId || qIndex + 1} 语句`"
+                            :placeholder="queryExprPlaceholder(q.datasourceType)"
+                            @input="grafanaExtractionError = ''"
+                          />
+                        </label>
+                      </div>
+                      <p v-if="grafanaPlaceholderNames.length" class="body-template-tokens">
+                        <span>已识别占位符</span>
+                        <code v-for="name in grafanaPlaceholderNames" :key="name">{{ `\{\{${name}\}\}` }}</code>
+                      </p>
+                    </div>
+                  </section>
+
+                  <section class="parameter-group" aria-label="查询变量参数">
+                    <div class="parameter-heading">
+                      <div class="group-title">
+                        <h2>变量参数映射</h2>
+                        <HelpHint label="变量参数说明" text="对应查询语句中的 {{变量}} 占位符（from / to 已内置）。可配置由客户端填写或固定值，勾选筛选参数表示至少填写一项。" />
+                      </div>
+                      <button type="button" class="button small" @click="addParameter()">
+                        ＋ 添加参数
+                      </button>
+                    </div>
+                    <div v-if="editor.parameters.length" class="table-wrap parameter-wrap">
+                      <table class="parameter-table">
+                        <thead>
+                          <tr>
+                            <th scope="col">参数名称 / 描述</th>
+                            <th scope="col">类型</th>
+                            <th scope="col">映射方式 / 固定值</th>
+                            <th scope="col" class="checkbox-cell">筛选参数</th>
+                            <th scope="col">填写要求</th>
+                            <th scope="col" aria-label="操作"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="(p, index) in editor.parameters" :key="index">
+                            <td>
+                              <input
+                                v-model="p.name"
+                                required
+                                :aria-label="`参数 ${index + 1} 名称`"
+                                placeholder="与 {{占位符}} 同名"
+                              /><input
+                                v-model="p.description"
+                                class="parameter-secondary-input"
+                                :aria-label="`参数 ${index + 1} 描述`"
+                                placeholder="参数描述（选填）"
+                              />
+                            </td>
+                            <td>
+                              <select
+                                v-model="p.type"
+                                class="parameter-type"
+                                :aria-label="`参数 ${index + 1} 类型`"
+                              >
+                                <option
+                                  v-for="(label, type) in grafanaParameterTypes"
+                                  :key="type"
+                                  :value="type"
+                                >
+                                  {{ label }} · {{ type }}
+                                </option>
+                              </select>
+                            </td>
+                            <td>
+                              <select
+                                v-model="p.fixed"
+                                :aria-label="`参数 ${index + 1} 映射方式`"
+                                @change="if (p.fixed) { p.queryFilter = false; p.nonEmpty = false; }"
+                              >
+                                <option :value="false">客户端填写</option>
+                                <option :value="true">固定值</option>
+                              </select><input
+                                v-if="p.fixed"
+                                v-model="p.value"
+                                class="parameter-secondary-input"
+                                type="text"
+                                :aria-label="`参数 ${index + 1} 固定值`"
+                                placeholder="输入固定值"
+                                autocomplete="off"
+                              />
+                            </td>
+                            <td class="checkbox-cell">
+                              <input
+                                v-model="p.queryFilter"
+                                type="checkbox"
+                                :disabled="p.fixed"
+                                :aria-label="`参数 ${index + 1} 筛选参数`"
+                              />
+                            </td>
+                            <td>
+                              <select
+                                v-if="!p.fixed"
+                                :value="requirementOf(p)"
+                                :aria-label="`参数 ${index + 1} 填写要求`"
+                                @change="setRequirement(p, ($event.target as HTMLSelectElement).value)"
+                              >
+                                <option v-for="choice in requirements" :key="choice">{{ choice }}</option>
+                              </select>
+                              <span v-else class="muted">无需填写</span>
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                class="icon-button danger-text"
+                                :aria-label="`删除参数 ${index + 1}`"
+                                @click="editor.parameters.splice(index, 1)"
+                              >×</button>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                </template>
+                <template v-else>
                 <section v-for="group in parameterGroups" :key="group.key"
                   class="parameter-group" :aria-label="group.label">
                   <div class="parameter-heading">
@@ -1294,6 +2003,7 @@ onUnmounted(() => {
                       </table>
                     </div>
                 </section>
+                </template>
                 <section aria-labelledby="output-fields-title">
                   <div class="parameter-heading">
                     <div class="group-title">
@@ -1430,7 +2140,13 @@ onUnmounted(() => {
                   <thead><tr><th scope="col">参数</th><th scope="col">调试值</th></tr></thead>
                   <tbody>
                     <tr v-for="row in trialRows" :key="row.name">
-                      <th scope="row">{{ row.name }}<small>{{ parameterTypes[row.type] }} · {{ requirementOf(row.parameter) }}</small></th>
+                      <th scope="row">
+                        {{ row.name }}
+                        <small>
+                          {{ parameterTypes[row.type] }} ·
+                          {{ row.defaultHint ? `选填（默认 ${row.defaultHint}）` : requirementOf(row.parameter) }}
+                        </small>
+                      </th>
                       <td>
                         <select v-if="row.type === 'boolean'" v-model="row.value" :aria-label="`调试值 ${row.name}`">
                           <option value="">请选择</option><option value="true">true</option><option value="false">false</option>
@@ -1443,7 +2159,7 @@ onUnmounted(() => {
                           :value="row.value" @input="row.value = ($event.target as HTMLInputElement).value"
                           :aria-label="`调试值 ${row.name}`" :placeholder="`输入${parameterTypes[row.type]}`" />
                         <input v-else v-model="row.value" :aria-label="`调试值 ${row.name}`"
-                          :placeholder="`输入${parameterTypes[row.type]}`" />
+                          :placeholder="row.defaultHint ? `留空使用默认：${row.defaultHint}` : `输入${parameterTypes[row.type]}`" />
                       </td>
                     </tr>
                   </tbody>
@@ -1472,8 +2188,12 @@ onUnmounted(() => {
                     ><span>{{ result.contentType || "无内容类型" }}</span>
                   </div>
                   <details open>
-                    <summary>{{ sharedTool ? "调用结果" : "原始响应" }}</summary>
+                    <summary>{{ sharedTool ? "调用结果" : isGrafanaEditor && result.rawBody ? "查询结果（已整理）" : "原始响应" }}</summary>
                     <pre>{{ formattedBody(result.body) }}</pre>
+                  </details>
+                  <details v-if="isGrafanaEditor && result.rawBody" class="grafana-raw-details">
+                    <summary>Grafana 原始响应</summary>
+                    <pre>{{ formattedBody(result.rawBody) }}</pre>
                   </details>
                   <section v-if="successfulResponse && editor.outputFields?.length" class="custom-output" aria-labelledby="custom-output-title">
                     <div class="output-result-heading">
@@ -1501,6 +2221,7 @@ onUnmounted(() => {
                 >
                   输入结构</button
                 ><button
+                  v-if="!isGrafanaEditor"
                   :disabled="selectedId === null || dirty"
                   :class="{ selected: preview === 'openapi' }"
                   @click="loadExport('openapi')"
@@ -1689,6 +2410,15 @@ onUnmounted(() => {
             </table>
           </div>
         </section>
+      </template>
+      <template v-else-if="view === 'grafana'">
+        <GrafanaConnections
+          :connections="grafanaConnections"
+          :allowed-origins="allowedOrigins"
+          @refresh="refreshGrafanaConnections"
+          @notify="notify"
+          @error="(msg) => (error = msg)"
+        />
       </template>
       <template v-else-if="view === 'users'">
         <header class="page-header">

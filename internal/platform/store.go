@@ -158,7 +158,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, schema+approvalSchema); err != nil {
+	if _, err = tx.Exec(ctx, schema+approvalSchema+grafanaSchema); err != nil {
 		return nil, err
 	}
 	var exists bool

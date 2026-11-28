@@ -17,26 +17,54 @@ const maxResponseBytes = 2 << 20
 type CallResult struct {
 	StatusCode   int    `json:"statusCode"`
 	Body         string `json:"body"`
+	RawBody      string `json:"rawBody,omitempty"`
 	ContentType  string `json:"contentType"`
 	DurationMS   int64  `json:"durationMs"`
 	OutputMapped bool   `json:"outputMapped,omitempty"`
 }
 
 // prepare 构造上游请求并确认目标源地址已获准访问。
-func (a *App) prepare(d Definition, args map[string]any) (*http.Request, error) {
-	request, err := d.BuildRequest(args)
-	if err != nil {
-		return nil, err
+func (a *App) prepare(ctx context.Context, d Definition, args map[string]any) (*http.Request, string, string, error) {
+	var (
+		request      *http.Request
+		resolvedFrom string
+		resolvedTo   string
+		err          error
+	)
+	if d.isGrafana() {
+		if d.Grafana == nil || d.Grafana.ConnectionID < 1 {
+			return nil, "", "", fmt.Errorf("请选择 Grafana 连接")
+		}
+		conn, err := a.getGrafanaConnection(ctx, d.Grafana.ConnectionID)
+		if err != nil {
+			if isNotFound(err) {
+				return nil, "", "", fmt.Errorf("关联的 Grafana 连接不存在或已被删除")
+			}
+			return nil, "", "", fmt.Errorf("读取 Grafana 连接失败")
+		}
+		request, resolvedFrom, resolvedTo, err = d.buildGrafanaRequest(conn, args)
+		if err != nil {
+			return nil, "", "", err
+		}
+	} else {
+		request, err = d.BuildRequest(args)
+		if err != nil {
+			return nil, "", "", err
+		}
 	}
 	if !a.allowed[request.URL.Scheme+"://"+strings.ToLower(request.URL.Host)] {
-		return nil, fmt.Errorf("该上游地址未获准访问，请联系管理员配置 UPSTREAM_ORIGINS")
+		return nil, "", "", fmt.Errorf("该上游地址未获准访问，请联系管理员配置 UPSTREAM_ORIGINS")
 	}
-	return request, nil
+	return request, resolvedFrom, resolvedTo, nil
 }
 
 func (a *App) execute(ctx context.Context, d Definition, args map[string]any) (CallResult, error) {
+	return a.executeWithRaw(ctx, d, args, false)
+}
+
+func (a *App) executeWithRaw(ctx context.Context, d Definition, args map[string]any, includeRaw bool) (CallResult, error) {
 	var result CallResult
-	request, err := a.prepare(d, args)
+	request, resolvedFrom, resolvedTo, err := a.prepare(ctx, d, args)
 	if err != nil {
 		return result, err
 	}
@@ -59,6 +87,17 @@ func (a *App) execute(ctx context.Context, d Definition, args map[string]any) (C
 		return result, fmt.Errorf("上游响应超过 2 MiB 限制")
 	}
 	result = CallResult{StatusCode: response.StatusCode, ContentType: response.Header.Get("Content-Type"), DurationMS: time.Since(start).Milliseconds()}
+	if d.isGrafana() && response.StatusCode >= 200 && response.StatusCode < 300 {
+		if includeRaw {
+			result.RawBody = string(data)
+		}
+		formatted, err := formatGrafanaResponse(resolvedFrom, resolvedTo, data)
+		if err != nil {
+			return result, fmt.Errorf("解析 Grafana 响应失败")
+		}
+		data = formatted
+		result.ContentType = "application/json"
+	}
 	if len(d.OutputFields) > 0 && response.StatusCode >= 200 && response.StatusCode < 300 {
 		data, err = mapOutput(d.OutputFields, data)
 		if err != nil {

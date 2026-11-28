@@ -17,13 +17,54 @@ export interface Parameter {
   value: string;
 }
 
+export interface GrafanaQuery {
+  refId: string;
+  datasourceUid: string;
+  datasourceType: string;
+  datasourceName?: string;
+  expr: string;
+  queryMode?: string;
+  maxDataPoints?: number;
+  interval?: string;
+  maxLines?: number;
+  timeField?: string;
+}
+
+export interface GrafanaConfig {
+  connectionId: number;
+  fromRequired: boolean;
+  defaultFrom?: string;
+  toRequired: boolean;
+  defaultTo?: string;
+  queries: GrafanaQuery[];
+}
+
+export interface GrafanaConnection {
+  id: number;
+  name: string;
+  baseUrl: string;
+  authType: "bearer" | "basic" | "cookie";
+  username?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GrafanaDatasource {
+  uid: string;
+  name: string;
+  type: string;
+  isDefault?: boolean;
+}
+
 export interface Definition {
+  kind?: "http" | "grafana";
   name: string;
   description: string;
   url: string;
   method: string;
   timeoutSeconds: number;
   bodyTemplate?: string;
+  grafana?: GrafanaConfig;
   parameters: Parameter[];
   outputFields?: OutputField[];
   approval?: ApprovalRule;
@@ -80,9 +121,57 @@ export interface AccessToken {
 export interface CallResult {
   statusCode: number;
   body: string;
+  rawBody?: string;
   contentType: string;
   durationMs: number;
   outputMapped?: boolean;
+}
+
+export type GrafanaDatasourceFamily =
+  | "prometheus"
+  | "loki"
+  | "victorialogs"
+  | "clickhouse"
+  | "sql"
+  | "elasticsearch"
+  | "generic";
+
+export function grafanaDatasourceFamily(dsType: string): GrafanaDatasourceFamily {
+  const t = (dsType || "").trim().toLowerCase();
+  if (t.includes("victoriametrics-logs") || t.includes("victorialogs") || t.includes("vmlogs")) {
+    return "victorialogs";
+  }
+  if (t.includes("loki")) return "loki";
+  if (t.includes("prometheus") || t.includes("victoriametrics")) return "prometheus";
+  if (t.includes("clickhouse")) return "clickhouse";
+  if (
+    t.includes("mysql") ||
+    t.includes("postgres") ||
+    t.includes("mssql") ||
+    t.includes("sqlite") ||
+    t.includes("trino") ||
+    t.includes("oracle") ||
+    t.includes("snowflake")
+  ) {
+    return "sql";
+  }
+  if (t.includes("elasticsearch") || t.includes("opensearch")) return "elasticsearch";
+  return "generic";
+}
+
+export function emptyGrafanaQuery(refId = "A", previous?: GrafanaQuery): GrafanaQuery {
+  return {
+    refId,
+    datasourceUid: previous?.datasourceUid ?? "",
+    datasourceType: previous?.datasourceType ?? "",
+    datasourceName: previous?.datasourceName ?? "",
+    expr: "",
+    queryMode: "",
+    maxDataPoints: undefined,
+    interval: "",
+    maxLines: undefined,
+    timeField: "",
+  };
 }
 
 export const emptyDefinition = (): Definition => ({
@@ -91,6 +180,24 @@ export const emptyDefinition = (): Definition => ({
   url: "",
   method: "GET",
   timeoutSeconds: 15,
+  parameters: [],
+});
+
+export const emptyGrafanaDefinition = (connectionId = 0): Definition => ({
+  kind: "grafana",
+  name: "",
+  description: "",
+  url: "",
+  method: "",
+  timeoutSeconds: 15,
+  grafana: {
+    connectionId,
+    fromRequired: false,
+    defaultFrom: "now-1h",
+    toRequired: false,
+    defaultTo: "now",
+    queries: [emptyGrafanaQuery("A")],
+  },
   parameters: [],
 });
 
@@ -123,14 +230,33 @@ export const podExample = (): Definition => ({
 });
 
 export function definitionOf(d: Definition): Definition {
+  const isGrafana = d.kind === "grafana";
   return {
+    kind: isGrafana ? "grafana" : undefined,
     name: d.name,
     description: d.description,
-    url: d.url,
-    method: d.method,
+    url: d.url ?? "",
+    method: d.method ?? (isGrafana ? "" : "GET"),
     timeoutSeconds: d.timeoutSeconds,
     bodyTemplate: d.bodyTemplate,
-    parameters: d.parameters.map((p) => ({ ...p })),
+    grafana: isGrafana
+      ? {
+          connectionId: d.grafana?.connectionId ?? 0,
+          fromRequired: d.grafana?.fromRequired ?? false,
+          defaultFrom: d.grafana?.defaultFrom ?? (d.grafana?.fromRequired ? "" : "now-1h"),
+          toRequired: d.grafana?.toRequired ?? false,
+          defaultTo: d.grafana?.defaultTo ?? (d.grafana?.toRequired ? "" : "now"),
+          queries: d.grafana?.queries?.length
+            ? d.grafana.queries.map((q) => ({
+                ...q,
+                queryMode: q.queryMode ?? "",
+                interval: q.interval ?? "",
+                timeField: q.timeField ?? "",
+              }))
+            : [emptyGrafanaQuery("A")],
+        }
+      : undefined,
+    parameters: (d.parameters ?? []).map((p) => ({ ...p })),
     outputFields: d.outputFields?.length ? d.outputFields.map((field) => ({ ...field })) : undefined,
     approval: d.approval ? { ...d.approval } : undefined,
   };
