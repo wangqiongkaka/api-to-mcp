@@ -139,7 +139,7 @@ func (a *App) serveMCP(w http.ResponseWriter, r *http.Request) {
 	server := mcp.NewServer(&mcp.Implementation{Name: "api-to-mcp", Version: "0.1.0"}, nil)
 	for _, record := range tools {
 		id, name, description := record.ID, record.mcpName(user.ID), record.Description
-		if record.Approval != nil {
+		if record.Approval != nil && !record.isGrafana() {
 			description += "\n\n调用需审批：提交后不会立即执行，审批通过后由平台执行并保存结果。"
 		}
 		server.AddTool(&mcp.Tool{Name: name, Description: description, InputSchema: record.InputSchema()}, func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -153,7 +153,7 @@ func (a *App) serveMCP(w http.ResponseWriter, r *http.Request) {
 					return toolError("工具参数必须是 JSON 对象"), nil
 				}
 			}
-			if tool.Approval != nil {
+			if tool.Approval != nil && !tool.isGrafana() {
 				return a.submitApproval(ctx, user, tool, args), nil
 			}
 			result, err := a.execute(ctx, tool.Definition, args)

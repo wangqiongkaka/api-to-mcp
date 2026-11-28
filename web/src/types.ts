@@ -47,6 +47,9 @@ export interface GrafanaQuery {
   interval?: string;
   maxLines?: number;
   timeField?: string;
+  maxPoints?: number;
+  changePointRatio?: number;
+  maxChangePoints?: number;
   logProcessors?: LogProcessor[];
 }
 
@@ -206,6 +209,9 @@ export function emptyGrafanaQuery(refId = "A", previous?: GrafanaQuery): Grafana
     interval: "",
     maxLines: undefined,
     timeField: "",
+    maxPoints: undefined,
+    changePointRatio: undefined,
+    maxChangePoints: undefined,
   };
 }
 
@@ -264,6 +270,12 @@ export const podExample = (): Definition => ({
   ],
 });
 
+function optionalNumber(value: unknown): number | undefined {
+  if (value === "" || value === null || value === undefined) return undefined;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 export function definitionOf(d: Definition): Definition {
   const isGrafana = d.kind === "grafana";
   return {
@@ -282,22 +294,32 @@ export function definitionOf(d: Definition): Definition {
           toRequired: d.grafana?.toRequired ?? false,
           defaultTo: d.grafana?.defaultTo ?? (d.grafana?.toRequired ? "" : "now"),
           queries: d.grafana?.queries?.length
-            ? d.grafana.queries.map((q) => ({
-                ...q,
-                dataType:
+            ? d.grafana.queries.map((q) => {
+                const resolvedType =
                   q.dataType ??
-                  (q.datasourceType ? defaultGrafanaDataType(q.datasourceType) : "metrics"),
-                queryMode: q.queryMode ?? "",
-                interval: q.interval ?? "",
-                timeField: q.timeField ?? "",
-                logProcessors: q.logProcessors?.length
-                  ? q.logProcessors.map((p) => ({
-                      ...p,
-                      keys: p.keys ? [...p.keys] : undefined,
-                      fields: p.fields ? [...p.fields] : undefined,
-                    }))
-                  : undefined,
-              }))
+                  (q.datasourceType ? defaultGrafanaDataType(q.datasourceType) : "metrics");
+                const isMetrics = resolvedType === "metrics";
+                return {
+                  ...q,
+                  dataType: resolvedType,
+                  queryMode: q.queryMode ?? "",
+                  interval: q.interval ?? "",
+                  timeField: q.timeField ?? "",
+                  maxDataPoints: optionalNumber(q.maxDataPoints),
+                  maxLines: optionalNumber(q.maxLines),
+                  maxPoints: isMetrics ? optionalNumber(q.maxPoints) : undefined,
+                  changePointRatio: isMetrics ? optionalNumber(q.changePointRatio) : undefined,
+                  maxChangePoints: isMetrics ? optionalNumber(q.maxChangePoints) : undefined,
+                  logProcessors:
+                    !isMetrics && q.logProcessors?.length
+                      ? q.logProcessors.map((p) => ({
+                          ...p,
+                          keys: p.keys ? [...p.keys] : undefined,
+                          fields: p.fields ? [...p.fields] : undefined,
+                        }))
+                      : undefined,
+                };
+              })
             : [emptyGrafanaQuery("A")],
         }
       : undefined,
@@ -314,6 +336,6 @@ export function definitionOf(d: Definition): Definition {
             : undefined,
         }))
       : undefined,
-    approval: d.approval ? { ...d.approval } : undefined,
+    approval: !isGrafana && d.approval ? { ...d.approval } : undefined,
   };
 }

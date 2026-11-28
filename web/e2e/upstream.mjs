@@ -26,6 +26,37 @@ const server = createServer(async (req, res) => {
     const results = {}
     for (const q of body.queries || []) {
       const statement = q.expr || q.rawSql || q.query || ''
+      if ((q.datasource?.type || '').includes('prometheus')) {
+        // 300 分钟时序数据，在 2026-05-21T08:00:00+08:00（1779321600000）处发生骤降 83.92 -> 43.95
+        const dropMs = 1779321600000
+        const startMs = dropMs - 180 * 60000
+        const ts = []
+        const vals = []
+        for (let i = 0; i < 300; i++) {
+          ts.push(startMs + i * 60000)
+          if (i < 179) vals.push(84)
+          else if (i === 179) vals.push(83.92)
+          else if (i === 180) vals.push(43.95)
+          else vals.push(43.1)
+        }
+        results[q.refId] = {
+          status: 200,
+          frames: [{
+            schema: {
+              name: q.refId,
+              refId: q.refId,
+              fields: [
+                { name: 'Time', type: 'time' },
+                { name: 'Value', type: 'number', labels: { datasource: q.datasource?.type || '', expr: statement, range: `${body.from}..${body.to}` } },
+              ],
+            },
+            data: {
+              values: [ts, vals],
+            },
+          }],
+        }
+        continue
+      }
       const fields = [
         { name: 'Time', type: 'time' },
         { name: 'Statement', type: 'string', labels: { datasource: q.datasource?.type || '' } },

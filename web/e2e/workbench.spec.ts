@@ -549,6 +549,10 @@ test("管理员配置 Grafana 连接并创建多条查询工具与调试发布",
   await expect(page.getByLabel("查询 A 数据类型")).toHaveValue("metrics");
 
   await page.getByLabel("查询 A 语句").fill('up{instance=~"{{host_ip}}.*"}');
+  await page.getByText("时序降采样与突变点参数").click();
+  await page.getByLabel("查询 A LTTB 目标点数").fill("60");
+  await page.getByLabel("查询 A 突变阈值比例").fill("0.3");
+  await page.getByLabel("查询 A 最多突变点数").fill("3");
   await page.getByRole("button", { name: /添加查询/ }).click();
   await page.getByLabel("查询 2 数据源").selectOption("vmlogs-main");
   await expect(page.getByLabel("查询 B 数据类型")).toHaveValue("logs");
@@ -565,6 +569,7 @@ test("管理员配置 Grafana 连接并创建多条查询工具与调试发布",
   await expect(page.locator(".schema-preview")).toContainText('"host_ip"');
   await expect(page.locator(".schema-preview")).not.toContainText('"env"');
   await expect(page.getByRole("button", { name: "OpenAPI", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "调用审批" })).toHaveCount(0);
 
   await page.getByRole("button", { name: "保存草稿" }).click();
   await expect(page.getByRole("button", { name: "发送请求" })).toBeEnabled();
@@ -576,6 +581,9 @@ test("管理员配置 Grafana 连接并创建多条查询工具与调试发布",
   await expect(page.locator(".call-result pre").first()).toContainText("prod");
   await expect(page.locator(".call-result pre").first()).toContainText('"dataType": "metrics"');
   await expect(page.locator(".call-result pre").first()).toContainText('"dataType": "logs"');
+  await expect(page.locator(".call-result pre").first()).toContainText('"totalPoints": 300');
+  await expect(page.locator(".call-result pre").first()).toContainText('"sampledPoints": 60');
+  await expect(page.locator(".call-result pre").first()).toContainText('"toTime": "2026-05-21T08:00:00+08:00"');
   await expect(page.getByText("Grafana 原始响应")).toBeVisible();
 
   // 在「输出字段」选定日志字段，自动带入调试样例，通过划选生成正则 -> JSON 展开 -> 拆数组 -> 保留字段，预览自定义结果

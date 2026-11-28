@@ -336,7 +336,7 @@ func (a *App) call(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "arguments 必须是 JSON 对象，无参数时传入空对象")
 		return
 	}
-	if record.Approval != nil && !record.manageableBy(currentUser(r)) {
+	if record.Approval != nil && !record.isGrafana() && !record.manageableBy(currentUser(r)) {
 		fail(w, 403, "该接口需审批后执行，请通过 MCP 调用提交审批")
 		return
 	}

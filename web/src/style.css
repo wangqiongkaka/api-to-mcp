@@ -797,12 +797,14 @@ tbody tr:last-child td {
 .grafana-raw-details {
   margin-top: 12px;
 }
-.log-processor-box {
+.log-processor-box,
+.metrics-analysis-box {
   border-top: 1px dashed #d8dfeb;
   padding-top: 10px;
   min-width: 0;
 }
-.log-processor-box > summary {
+.log-processor-box > summary,
+.metrics-analysis-box > summary {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -813,8 +815,19 @@ tbody tr:last-child td {
   padding-block: 2px;
   flex-wrap: wrap;
 }
-.log-processor-box > summary:hover {
+.log-processor-box > summary:hover,
+.metrics-analysis-box > summary:hover {
   text-decoration: underline;
+}
+.metrics-analysis-meta {
+  color: var(--muted);
+  font-weight: 450;
+}
+.metrics-analysis-body {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  min-width: 0;
 }
 .log-processor-body {
   display: grid;

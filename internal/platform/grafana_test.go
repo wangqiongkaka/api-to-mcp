@@ -145,6 +145,7 @@ func TestGrafanaDefinitionValidateAndSchema(t *testing.T) {
 		{"RefID 重复", func(d *Definition) { d.Grafana.Queries[1].RefID = "a" }},
 		{"数组参数不支持", func(d *Definition) { d.Parameters[0].Type = "array" }},
 		{"非法 dataType", func(d *Definition) { d.Grafana.Queries[0].DataType = "traces" }},
+		{"不支持调用审批", func(d *Definition) { d.Approval = &ApprovalRule{Approver: "self"} }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -293,13 +294,30 @@ func TestFormatGrafanaResponseAndOutputMapping(t *testing.T) {
 	}
 	frames := aRes["frames"].([]any)
 	frame0 := frames[0].(map[string]any)
-	rows := frame0["rows"].([]any)
-	if len(rows) != 2 {
-		t.Fatalf("应展开为 2 行，实际 %d", len(rows))
+	if frame0["totalPoints"] != float64(2) || frame0["sampledPoints"] != float64(2) {
+		t.Fatalf("时序点数统计不符：%#v", frame0)
 	}
-	row0 := rows[0].(map[string]any)
-	if row0["Time"] != "2023-11-14T22:13:20Z" || row0["Value"] != float64(1) {
-		t.Fatalf("首行格式化不符：%#v", row0)
+	if _, hasRows := frame0["rows"]; hasRows {
+		t.Fatalf("纯数值时序帧不应输出冗余 rows：%#v", frame0)
+	}
+	stats := frame0["stats"].(map[string]any)
+	if stats["min"] != float64(0.5) || stats["max"] != float64(1) || stats["avg"] != float64(0.75) {
+		t.Fatalf("全量统计量不符：%#v", stats)
+	}
+	if stats["maxTime"] != "2023-11-15T06:13:20+08:00" || stats["minTime"] != "2023-11-15T06:14:20+08:00" {
+		t.Fatalf("极值时间戳应为东八区格式：%#v", stats)
+	}
+	series := frame0["series"].([]any)
+	if len(series) != 2 {
+		t.Fatalf("series 应包含 2 个配对点，实际 %d", len(series))
+	}
+	pt0 := series[0].([]any)
+	if pt0[0] != "2023-11-15T06:13:20+08:00" || pt0[1] != float64(1) {
+		t.Fatalf("首点配对格式不符：%#v", pt0)
+	}
+	cps := frame0["changePoints"].([]any)
+	if len(cps) != 1 {
+		t.Fatalf("应检测到 1 个突变点，实际 %#v", cps)
 	}
 	bRes := results["B"].(map[string]any)
 	if bRes["dataType"] != "logs" {
@@ -311,14 +329,15 @@ func TestFormatGrafanaResponseAndOutputMapping(t *testing.T) {
 
 	// 验证兼容现有 OutputFields 映射
 	mapped, err := mapOutput([]OutputField{
-		{Name: "values", Source: "response", Value: "/results/A/frames/0/rows/*/Value"},
+		{Name: "values", Source: "response", Value: "/results/A/frames/0/series/*/1"},
+		{Name: "avg", Source: "response", Value: "/results/A/frames/0/stats/avg"},
 		{Name: "instance", Source: "response", Value: "/results/A/frames/0/labels/instance"},
 		{Name: "type", Source: "response", Value: "/results/A/dataType"},
 	}, formatted)
 	if err != nil {
 		t.Fatalf("输出字段映射失败：%v", err)
 	}
-	if string(mapped) != `{"instance":"10.0.0.8:9100","type":"metrics","values":[1,0.5]}` {
+	if string(mapped) != `{"avg":0.75,"instance":"10.0.0.8:9100","type":"metrics","values":[1,0.5]}` {
 		t.Fatalf("输出映射结果不符：%s", string(mapped))
 	}
 }

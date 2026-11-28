@@ -481,6 +481,37 @@ function removeGrafanaQuery(index: number) {
   g.queries.splice(index, 1);
 }
 
+function clearQueryTypeSpecificFields(q: GrafanaQuery) {
+  if (q.dataType !== "logs") q.logProcessors = undefined;
+  if (q.dataType !== "metrics") {
+    q.maxPoints = undefined;
+    q.changePointRatio = undefined;
+    q.maxChangePoints = undefined;
+  }
+}
+
+function setOptionalQueryNumber(
+  q: GrafanaQuery,
+  field: "maxPoints" | "changePointRatio" | "maxChangePoints",
+  raw: string,
+) {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    q[field] = undefined;
+    return;
+  }
+  const n = Number(trimmed);
+  q[field] = Number.isFinite(n) ? n : undefined;
+}
+
+function metricsAnalysisSummary(q: GrafanaQuery) {
+  const pts = q.maxPoints ?? 240;
+  const ratio = q.changePointRatio ?? 0.3;
+  const maxCP = q.maxChangePoints ?? 5;
+  const custom = q.maxPoints !== undefined || q.changePointRatio !== undefined || q.maxChangePoints !== undefined;
+  return `${custom ? "已自定义" : "默认"}：LTTB ${pts} 点 · 突变阈值 ${ratio} · 最多 ${maxCP} 个`;
+}
+
 function selectQueryDatasource(q: GrafanaQuery, uid: string) {
   const ds = grafanaDatasources.value.find((item) => item.uid === uid);
   q.datasourceUid = uid;
@@ -488,7 +519,7 @@ function selectQueryDatasource(q: GrafanaQuery, uid: string) {
     q.datasourceType = ds.type;
     q.datasourceName = ds.name;
     q.dataType = defaultGrafanaDataType(ds.type);
-    if (q.dataType !== "logs") q.logProcessors = undefined;
+    clearQueryTypeSpecificFields(q);
     q.queryMode = "";
   } else {
     q.datasourceType = "";
@@ -1693,7 +1724,7 @@ onUnmounted(() => {
                               v-model="q.dataType"
                               required
                               :aria-label="`查询 ${q.refId || qIndex + 1} 数据类型`"
-                              @change="q.dataType !== 'logs' && (q.logProcessors = undefined)"
+                              @change="clearQueryTypeSpecificFields(q)"
                             >
                               <option value="metrics">Metrics（指标）</option>
                               <option value="logs">Logs（日志）</option>
@@ -1775,6 +1806,63 @@ onUnmounted(() => {
                             @input="grafanaExtractionError = ''"
                           />
                         </label>
+
+                        <details
+                          v-if="q.dataType === 'metrics'"
+                          class="metrics-analysis-box"
+                          :open="q.maxPoints !== undefined || q.changePointRatio !== undefined || q.maxChangePoints !== undefined"
+                        >
+                          <summary>
+                            <span>时序降采样与突变点参数</span>
+                            <span class="metrics-analysis-meta">{{ metricsAnalysisSummary(q) }}</span>
+                          </summary>
+                          <div class="metrics-analysis-body">
+                            <div class="grafana-query-options">
+                              <label>
+                                LTTB 目标点数（maxPoints）
+                                <input
+                                  :value="q.maxPoints ?? ''"
+                                  type="number"
+                                  min="2"
+                                  max="10000"
+                                  step="1"
+                                  :aria-label="`查询 ${q.refId || qIndex + 1} LTTB 目标点数`"
+                                  placeholder="默认 240"
+                                  @input="setOptionalQueryNumber(q, 'maxPoints', ($event.target as HTMLInputElement).value)"
+                                />
+                              </label>
+                              <label>
+                                突变阈值比例（changePointRatio）
+                                <input
+                                  :value="q.changePointRatio ?? ''"
+                                  type="number"
+                                  min="0.01"
+                                  max="1"
+                                  step="any"
+                                  :aria-label="`查询 ${q.refId || qIndex + 1} 突变阈值比例`"
+                                  placeholder="默认 0.3"
+                                  @input="setOptionalQueryNumber(q, 'changePointRatio', ($event.target as HTMLInputElement).value)"
+                                />
+                              </label>
+                              <label>
+                                最多突变点数（maxChangePoints）
+                                <input
+                                  :value="q.maxChangePoints ?? ''"
+                                  type="number"
+                                  min="0"
+                                  max="100"
+                                  step="1"
+                                  :aria-label="`查询 ${q.refId || qIndex + 1} 最多突变点数`"
+                                  placeholder="默认 5"
+                                  @input="setOptionalQueryNumber(q, 'maxChangePoints', ($event.target as HTMLInputElement).value)"
+                                />
+                              </label>
+                            </div>
+                            <p class="field-help">
+                              全量原始数据上自动计算 stats 与突变点（changePoints），LTTB 降采样仅用于紧凑输出 series（东八区时间）。
+                            </p>
+                          </div>
+                        </details>
                       </div>
                       <p v-if="grafanaPlaceholderNames.length" class="body-template-tokens">
                         <span>已识别占位符</span>
@@ -2137,7 +2225,7 @@ onUnmounted(() => {
                     </div>
                   </div>
                 </section>
-                <section aria-labelledby="approval-title">
+                <section v-if="!isGrafanaEditor" aria-labelledby="approval-title">
                   <div class="parameter-heading">
                     <div class="group-title">
                       <h2 id="approval-title">调用审批</h2>

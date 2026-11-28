@@ -721,6 +721,41 @@ func TestGrafanaIntegration(t *testing.T) {
 			for _, q := range reqBody.Queries {
 				refID := q["refId"].(string)
 				expr, _ := q["expr"].(string)
+				if refID == "C" {
+					tsStart := time.Date(2026, 5, 21, 5, 0, 0, 0, metricsTimeZone)
+					tsCol := make([]any, 300)
+					valCol := make([]any, 300)
+					for i := 0; i < 300; i++ {
+						tsCol[i] = tsStart.Add(time.Duration(i) * time.Minute).UnixMilli()
+						switch {
+						case i < 179:
+							valCol[i] = 84.0
+						case i == 179:
+							valCol[i] = 83.92
+						case i == 180: // 2026-05-21T08:00:00+08:00
+							valCol[i] = 43.95
+						default:
+							valCol[i] = 43.10
+						}
+					}
+					results[refID] = map[string]any{
+						"status": 200,
+						"frames": []map[string]any{{
+							"schema": map[string]any{
+								"name":  "cpu_usage",
+								"refId": refID,
+								"fields": []map[string]any{
+									{"name": "Time", "type": "time"},
+									{"name": "Value", "type": "number", "labels": map[string]string{"expr": expr}},
+								},
+							},
+							"data": map[string]any{
+								"values": [][]any{tsCol, valCol},
+							},
+						}},
+					}
+					continue
+				}
 				fields := []map[string]any{
 					{"name": "Time", "type": "time"},
 					{"name": "Expr", "type": "string"},
@@ -876,6 +911,17 @@ func TestGrafanaIntegration(t *testing.T) {
 						{Type: "keep_fields", Fields: []string{"Time", "Expr", "Range", "ip", "level", "trace_id", "msg"}},
 					},
 				},
+				{
+					RefID:            "C",
+					DatasourceUID:    "prom-1",
+					DatasourceType:   "prometheus",
+					DatasourceName:   "Prometheus",
+					DataType:         "metrics",
+					Expr:             `node_cpu_usage{instance=~"{{host_ip}}.*"}`,
+					MaxPoints:        40,
+					ChangePointRatio: floatPtr(0.3),
+					MaxChangePoints:  intPtr(2),
+				},
 			},
 		},
 		Parameters: []Parameter{
@@ -916,6 +962,9 @@ func TestGrafanaIntegration(t *testing.T) {
 	if !strings.Contains(callRes.Body, `"trace_id":"tr-int-1"`) || strings.Contains(callRes.Body, "noisy-pod-uid") || strings.Contains(callRes.Body, `"debug":"drop"`) {
 		t.Fatalf("Logs 处理器未对调试结果生效：%s", callRes.Body)
 	}
+	if !strings.Contains(callRes.Body, `"totalPoints":300`) || !strings.Contains(callRes.Body, `"sampledPoints":40`) || !strings.Contains(callRes.Body, `"toTime":"2026-05-21T08:00:00+08:00"`) {
+		t.Fatalf("Metrics 确定性分析与 LTTB 降采样未对调试结果生效：%s", callRes.Body)
+	}
 	// 测试日志样例分步预览接口
 	var previewRes struct {
 		Output map[string]any `json:"output"`
@@ -946,6 +995,8 @@ func TestGrafanaIntegration(t *testing.T) {
 		{Name: "metricType", Source: "response", Value: "/results/A/dataType"},
 		{Name: "logType", Source: "response", Value: "/results/B/dataType"},
 		{Name: "expr", Source: "response", Value: "/results/A/frames/0/rows/0/Expr"},
+		{Name: "cpuChangePoints", Source: "response", Value: "/results/C/frames/0/changePoints"},
+		{Name: "cpuSampledPoints", Source: "response", Value: "/results/C/frames/0/sampledPoints"},
 	}
 	def.Grafana.Queries[1].LogProcessors = nil
 	if code := jsonRequest(t, member, "PUT", fmt.Sprintf("%s/api/tools/%d", server.URL, tool.ID), def, &tool); code != 200 {
@@ -988,7 +1039,7 @@ func TestGrafanaIntegration(t *testing.T) {
 		t.Fatalf("MCP 调用 Grafana 工具失败：%v %+v", err, mcpRes)
 	}
 	text := mcpRes.Content[0].(*mcp.TextContent).Text
-	if !strings.Contains(text, "10.9.9.9") || !strings.Contains(text, "now-15m..now") || !strings.Contains(text, `"metricType":"metrics"`) || !strings.Contains(text, `"logType":"logs"`) || !strings.Contains(text, `"trace_id":"tr-int-1"`) || strings.Contains(text, "noisy-pod-uid") || strings.Contains(text, `"debug":"drop"`) {
+	if !strings.Contains(text, "10.9.9.9") || !strings.Contains(text, "now-15m..now") || !strings.Contains(text, `"metricType":"metrics"`) || !strings.Contains(text, `"logType":"logs"`) || !strings.Contains(text, `"trace_id":"tr-int-1"`) || strings.Contains(text, "noisy-pod-uid") || strings.Contains(text, `"debug":"drop"`) || !strings.Contains(text, `"cpuSampledPoints":40`) || !strings.Contains(text, `"2026-05-21T08:00:00+08:00"`) {
 		t.Fatalf("MCP 返回内容不符：%s", text)
 	}
 }

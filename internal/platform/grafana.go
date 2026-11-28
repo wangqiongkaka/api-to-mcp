@@ -38,18 +38,21 @@ type GrafanaConfig struct {
 }
 
 type GrafanaQuery struct {
-	RefID          string `json:"refId"`
-	DatasourceUID  string `json:"datasourceUid"`
-	DatasourceType string `json:"datasourceType"`
-	DatasourceName string `json:"datasourceName,omitempty"`
-	DataType       string         `json:"dataType,omitempty"`
-	Expr           string         `json:"expr"`
-	QueryMode      string         `json:"queryMode,omitempty"`
-	MaxDataPoints  int            `json:"maxDataPoints,omitempty"`
-	Interval       string         `json:"interval,omitempty"`
-	MaxLines       int            `json:"maxLines,omitempty"`
-	TimeField      string         `json:"timeField,omitempty"`
-	LogProcessors  []LogProcessor `json:"logProcessors,omitempty"`
+	RefID            string         `json:"refId"`
+	DatasourceUID    string         `json:"datasourceUid"`
+	DatasourceType   string         `json:"datasourceType"`
+	DatasourceName   string         `json:"datasourceName,omitempty"`
+	DataType         string         `json:"dataType,omitempty"`
+	Expr             string         `json:"expr"`
+	QueryMode        string         `json:"queryMode,omitempty"`
+	MaxDataPoints    int            `json:"maxDataPoints,omitempty"`
+	Interval         string         `json:"interval,omitempty"`
+	MaxLines         int            `json:"maxLines,omitempty"`
+	TimeField        string         `json:"timeField,omitempty"`
+	MaxPoints        int            `json:"maxPoints,omitempty"`
+	ChangePointRatio *float64       `json:"changePointRatio,omitempty"`
+	MaxChangePoints  *int           `json:"maxChangePoints,omitempty"`
+	LogProcessors    []LogProcessor `json:"logProcessors,omitempty"`
 }
 
 func defaultGrafanaDataType(dsType string) string {
@@ -636,6 +639,9 @@ func (d Definition) validateGrafana() error {
 				return err
 			}
 		}
+		if err := validateMetricsAnalysisConfig(refID, q); err != nil {
+			return err
+		}
 		if strings.TrimSpace(q.Expr) == "" || len(q.Expr) > 32768 {
 			return fmt.Errorf("查询 %s 请输入不超过 32768 字节的查询语句", refID)
 		}
@@ -667,8 +673,8 @@ func (d Definition) validateGrafana() error {
 			return fmt.Errorf("参数 %s 未在任何查询语句的 {{%s}} 占位符中使用", p.Name, p.Name)
 		}
 	}
-	if err := d.Approval.validate(); err != nil {
-		return err
+	if d.Approval != nil {
+		return fmt.Errorf("Grafana 查询工具不支持开启调用审批")
 	}
 	return validateOutputFields(d.OutputFields)
 }
@@ -1001,11 +1007,16 @@ type formattedGrafanaEntry struct {
 }
 
 type formattedGrafanaItem struct {
-	Name     string            `json:"name,omitempty"`
-	Labels   map[string]string `json:"labels,omitempty"`
-	Notices  []string          `json:"notices,omitempty"`
-	RowCount int               `json:"rowCount"`
-	Rows     []map[string]any  `json:"rows"`
+	Name          string                `json:"name,omitempty"`
+	Labels        map[string]string     `json:"labels,omitempty"`
+	Notices       []string              `json:"notices,omitempty"`
+	RowCount      *int                  `json:"rowCount,omitempty"`
+	Rows          *[]map[string]any     `json:"rows,omitempty"`
+	TotalPoints   *int                  `json:"totalPoints,omitempty"`
+	SampledPoints *int                  `json:"sampledPoints,omitempty"`
+	Stats         *MetricsStats         `json:"stats,omitempty"`
+	ChangePoints  *[]MetricsChangePoint `json:"changePoints,omitempty"`
+	Series        *[][2]any             `json:"series,omitempty"`
 }
 
 func formatGrafanaValue(fieldType string, v any) any {
@@ -1061,6 +1072,18 @@ func formatGrafanaResponse(from, to string, queries []GrafanaQuery, raw []byte) 
 			Frames:   make([]formattedGrafanaItem, 0, len(res.Frames)),
 		}
 		for _, frame := range res.Frames {
+			var notices []string
+			for _, notice := range frame.Schema.Meta.Notices {
+				if strings.TrimSpace(notice.Text) != "" {
+					notices = append(notices, notice.Text)
+				}
+			}
+			if found && dt == "metrics" {
+				if tsItems, ok := buildTimeSeriesItems(frame, notices, q); ok {
+					entry.Frames = append(entry.Frames, tsItems...)
+					continue
+				}
+			}
 			fields := frame.Schema.Fields
 			cols := frame.Data.Values
 			rowCount := 0
@@ -1102,17 +1125,12 @@ func formatGrafanaResponse(from, to string, queries []GrafanaQuery, raw []byte) 
 			if found && dt == "logs" && len(q.LogProcessors) > 0 {
 				rows = applyLogProcessorsToRows(rows, q.LogProcessors)
 			}
-			var notices []string
-			for _, notice := range frame.Schema.Meta.Notices {
-				if strings.TrimSpace(notice.Text) != "" {
-					notices = append(notices, notice.Text)
-				}
-			}
+			finalRowCount := len(rows)
 			item := formattedGrafanaItem{
 				Name:     frame.Schema.Name,
 				Notices:  notices,
-				RowCount: len(rows),
-				Rows:     rows,
+				RowCount: &finalRowCount,
+				Rows:     &rows,
 			}
 			if len(mergedLabels) > 0 {
 				item.Labels = mergedLabels
